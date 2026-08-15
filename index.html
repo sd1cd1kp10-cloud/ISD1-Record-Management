@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>I&CADD Records Management System</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{--blue:#14456b;--blue2:#1c5a8a;--bg:#f4f6f8;--panel:#fff;--line:#dbe2e8;--ink:#1c2b36;--muted:#5c6b78;--ok:#1f7a4d;--warn:#b3541c;--danger:#a63a3a;}
+*{box-sizing:border-box;} body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding-bottom:70px;}
+h1,h2,h3{margin:0 0 6px;} header{background:var(--blue);color:#fff;padding:12px 16px;position:sticky;top:0;z-index:20;display:flex;justify-content:space-between;align-items:center;}
+header .t{font-size:1.02rem;font-weight:600;} header small{display:block;font-size:.68rem;opacity:.8;font-weight:400;}
+main{max-width:640px;margin:0 auto;padding:12px;}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);}
+label{display:block;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:8px 0 3px;}
+input,select,textarea{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:6px;font-size:.9rem;font-family:inherit;background:#fff;}
+textarea{min-height:64px;}
+button{font-family:inherit;font-weight:600;font-size:.85rem;border-radius:6px;border:1px solid transparent;padding:9px 13px;cursor:pointer;}
+.btn-p{background:var(--blue);color:#fff;} .btn-o{background:#fff;border-color:var(--line);color:var(--ink);}
+.btn-d{background:#fff;border-color:var(--danger);color:var(--danger);} .btn-block{width:100%;margin-top:10px;}
+.row{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:.86rem;}
+.row:last-child{border-bottom:none;} .meta{font-size:.72rem;color:var(--muted);}
+.tag{font-size:.62rem;text-transform:uppercase;font-weight:700;padding:2px 7px;border-radius:100px;}
+.tag.g{background:#e5f1ea;color:var(--ok);} .tag.o{background:#fbeee2;color:var(--warn);} .tag.r{background:#f7e3e3;color:var(--danger);}
+nav{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--line);display:flex;z-index:20;overflow-x:auto;}
+nav button{flex:1;min-width:64px;background:none;border:none;border-radius:0;padding:8px 2px;color:var(--muted);font-size:.62rem;}
+nav button.active{color:var(--blue);font-weight:700;border-top:2px solid var(--blue);}
+.pill-row{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0;} .pill{font-size:.72rem;padding:5px 10px;border-radius:100px;border:1px solid var(--line);background:#fff;cursor:pointer;}
+.pill.active{background:var(--blue);color:#fff;border-color:var(--blue);}
+.empty{text-align:center;padding:22px;color:var(--muted);font-size:.84rem;border:1px dashed var(--line);border-radius:8px;}
+.banner{padding:9px 12px;border-radius:6px;font-size:.8rem;margin-bottom:10px;}
+.banner.err{background:#f7e3e3;color:var(--danger);} .banner.info{background:#e6eef4;color:var(--blue);}
+.stat{display:inline-block;min-width:88px;text-align:center;padding:10px 8px;background:#f0f4f7;border-radius:8px;margin:4px;}
+.stat b{display:block;font-size:1.3rem;} .stat span{font-size:.66rem;color:var(--muted);text-transform:uppercase;}
+table{width:100%;border-collapse:collapse;font-size:.8rem;} td,th{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left;}
+.switchrow{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #eee;font-size:.82rem;}
+.hidden{display:none!important;}
+.center{min-height:80vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px;}
+video,canvas{width:100%;border-radius:6px;background:#000;}
+</style></head>
+<body>
+<header><div><div class="t">I&CADD Records Management</div><small id="hdrSub">Not signed in</small></div>
+<button class="btn-o" id="signoutBtn" style="display:none;">Sign out</button></header>
+<main id="main"></main>
+<nav id="nav" class="hidden"></nav>
+
+<script>
+/* ============ CONFIG ============ */
+const LS = { get:(k,d)=>{try{const v=localStorage.getItem(k);return v===null?d:JSON.parse(v);}catch(e){return d;}}, set:(k,v)=>localStorage.setItem(k,JSON.stringify(v)) };
+const APP = { apiUrl: LS.get('rms_api_url',''), token: LS.get('rms_token',''), user: LS.get('rms_user',null), screen:'dashboard', cache:{} };
+
+async function api(action, payload={}){
+  if (!APP.apiUrl) throw new Error('API URL not configured');
+  const res = await fetch(APP.apiUrl, {method:'POST', body: JSON.stringify(Object.assign({action, token:APP.token}, payload))});
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+function el(html){const t=document.createElement('template');t.innerHTML=html.trim();return t.content.firstChild;}
+function esc(s){return (s||'').toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+
+/* ============ RENDER ROOT ============ */
+function render(){
+  const main = document.getElementById('main');
+  const nav = document.getElementById('nav');
+  const hdrSub = document.getElementById('hdrSub');
+  const signoutBtn = document.getElementById('signoutBtn');
+
+  if (!APP.apiUrl){ nav.classList.add('hidden'); signoutBtn.style.display='none'; hdrSub.textContent='Setup required'; main.innerHTML=''; main.appendChild(screenApiSetup()); return; }
+  if (!APP.token || !APP.user){ nav.classList.add('hidden'); signoutBtn.style.display='none'; hdrSub.textContent='Not signed in'; main.innerHTML=''; main.appendChild(screenLogin()); return; }
+
+  hdrSub.textContent = APP.user.name+' · '+roleLabel(APP.user.role);
+  signoutBtn.style.display='inline-block';
+  signoutBtn.onclick = doSignOut;
+  nav.classList.remove('hidden');
+  renderNav();
+  main.innerHTML='';
+  const screens = {
+    dashboard: screenDashboard, inward: ()=>screenRegister('inward'), outward: ()=>screenRegister('outward'),
+    mywork: screenMyWork, attendance: screenAttendance, users: screenUsers, storage: screenStorage, audit: screenAudit,
+    abstract: screenAbstract
+  };
+  (screens[APP.screen]||screenDashboard)().then(node=>main.appendChild(node));
+}
+function roleLabel(r){return r==='admin'?'Administrator':r==='field_officer'?'Field Officer':r==='work_inspector'?'Work Inspector':r;}
+
+function renderNav(){
+  const nav = document.getElementById('nav'); nav.innerHTML='';
+  const perms = APP.user.permissions||{};
+  const isAdmin = APP.user.role==='admin';
+  let items = [['dashboard','Home']];
+  if (isAdmin||perms.inward_view) items.push(['inward','Inward']);
+  if (isAdmin||perms.outward_view) items.push(['outward','Outward']);
+  items.push(['mywork','My Work']);
+  if (isAdmin||perms.inward_view||perms.outward_view||perms.reports_view) items.push(['abstract','Abstract']);
+  if (isAdmin||perms.attendance_view) items.push(['attendance','Attendance']);
+  if (isAdmin||perms.storage_view) items.push(['storage','Storage']);
+  if (isAdmin) items.push(['users','Users']);
+  if (isAdmin) items.push(['audit','Audit']);
+  items.forEach(([id,label])=>{
+    const b = el(`<button class="${APP.screen===id?'active':''}">${label}</button>`);
+    b.onclick = ()=>{APP.screen=id; render();};
+    nav.appendChild(b);
+  });
+}
+
+/* ============ SCREENS: setup / auth ============ */
+function screenApiSetup(){
+  const w = el(`<div class="card">
+    <h2>Connect the backend</h2>
+    <p class="meta">Paste the Apps Script Web App URL (from Deploy → New deployment → Web app).</p>
+    <label>Web App URL</label><input id="apiUrlInput" placeholder="https://script.google.com/macros/s/XXXX/exec">
+    <button class="btn-p btn-block" id="saveApi">Save</button>
+  </div>`);
+  w.querySelector('#saveApi').onclick=()=>{
+    const v = w.querySelector('#apiUrlInput').value.trim();
+    if (!v){alert('Enter the URL');return;}
+    APP.apiUrl=v; LS.set('rms_api_url',v); render();
+  };
+  return w;
+}
+
+function screenLogin(){
+  const w = el(`<div class="center">
+    <h1 style="font-size:1.3rem;">I&CADD Records Management</h1>
+    <p class="meta" style="max-width:300px;margin:6px 0 16px;">Sign in with your office username and password.</p>
+    <div class="card" style="width:100%;max-width:320px;text-align:left;">
+      <div id="loginErr"></div>
+      <label>Username</label><input id="loginUser">
+      <label>Password</label><input id="loginPass" type="password">
+      <button class="btn-p btn-block" id="loginBtn">Sign in</button>
+      <button class="btn-o btn-block" id="firstAdminBtn">First time setup — create administrator</button>
+    </div>
+  </div>`);
+  w.querySelector('#loginBtn').onclick = async ()=>{
+    const errBox = w.querySelector('#loginErr'); errBox.innerHTML='';
+    const username = w.querySelector('#loginUser').value.trim();
+    const password = w.querySelector('#loginPass').value;
+    try{
+      const data = await api('login', {username, password});
+      APP.token=data.token; APP.user=data.user;
+      LS.set('rms_token', APP.token); LS.set('rms_user', APP.user);
+      APP.screen='dashboard'; render();
+    }catch(e){ errBox.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
+  };
+  w.querySelector('#firstAdminBtn').onclick = ()=>{ APP.screen='bootstrap'; renderBootstrap(); };
+  return w;
+}
+
+function renderBootstrap(){
+  const main = document.getElementById('main'); main.innerHTML='';
+  const w = el(`<div class="center">
+    <h2>Create the first administrator</h2>
+    <p class="meta" style="max-width:300px;">Only works once — before any user accounts exist.</p>
+    <div class="card" style="width:100%;max-width:320px;text-align:left;">
+      <div id="bErr"></div>
+      <label>Full name</label><input id="bName">
+      <label>Username</label><input id="bUser">
+      <label>Password (min 8 chars)</label><input id="bPass" type="password">
+      <button class="btn-p btn-block" id="bGo">Create administrator</button>
+      <button class="btn-o btn-block" id="bBack">Back to sign in</button>
+    </div>
+  </div>`);
+  w.querySelector('#bBack').onclick=()=>{APP.screen='dashboard'; render();};
+  w.querySelector('#bGo').onclick = async ()=>{
+    const errBox = w.querySelector('#bErr'); errBox.innerHTML='';
+    try{
+      await api('bootstrap_admin', {name:w.querySelector('#bName').value, username:w.querySelector('#bUser').value, password:w.querySelector('#bPass').value});
+      errBox.innerHTML = `<div class="banner info">Administrator created. Sign in now.</div>`;
+      setTimeout(()=>{APP.screen='dashboard'; render();}, 1200);
+    }catch(e){ errBox.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
+  };
+  main.appendChild(w);
+}
+function doSignOut(){ api('logout').catch(()=>{}); APP.token=null; APP.user=null; LS.set('rms_token',''); LS.set('rms_user',null); render(); }
+
+/* ============ SCREENS: dashboard ============ */
+async function screenDashboard(){
+  const w = document.createElement('div');
+  if (APP.user.role==='admin'){
+    try{
+      const s = await api('dashboard_stats');
+      w.appendChild(el(`<div class="card"><h2>Overview</h2>
+        <div class="stat"><b>${s.inwardTotal}</b><span>Inward</span></div>
+        <div class="stat"><b>${s.outwardTotal}</b><span>Outward</span></div>
+        <div class="stat"><b>${s.employeesTotal}</b><span>Employees</span></div>
+        <div class="stat"><b>${s.activeEmployees}</b><span>Active</span></div>
+        <div class="stat"><b>${s.attendanceToday.present}</b><span>Present today</span></div>
+        <div class="stat"><b>${s.attendanceToday.absent}</b><span>Absent today</span></div>
+      </div>`));
+      const statusRows = Object.entries(s.inwardByStatus||{}).map(([k,v])=>`<div class="row"><span>${esc(k)}</span><b>${v}</b></div>`).join('') || '<div class="empty">No inward yet</div>';
+      w.appendChild(el(`<div class="card"><h2>Inward by status</h2>${statusRows}</div>`));
+    }catch(e){ w.appendChild(el(`<div class="banner err">${esc(e.message)}</div>`)); }
+  } else {
+    w.appendChild(el(`<div class="card"><h2>Welcome, ${esc(APP.user.name)}</h2><p class="meta">${roleLabel(APP.user.role)}</p></div>`));
+  }
+  return w;
+}
+
+/* ============ SCREENS: inward / outward ============ */
+async function screenRegister(kind){
+  const w = document.createElement('div');
+  const perms = APP.user.permissions||{}; const isAdmin = APP.user.role==='admin';
+  const canCreate = isAdmin || perms[kind+'_create'];
+  const numberLabel = kind==='inward' ? 'Inward Number' : 'Outward Number';
+  let inwardList = [];
+  if (kind==='outward'){ try{ inwardList = (await api('list_inward')).inward; }catch(e){} }
+  let folderOptions = [];
+  let folderLoadError = '';
+  try{ folderOptions = (await api('list_folder_tree')).folders; }catch(e){ folderLoadError = e.message; }
+  if (!folderOptions.length) folderOptions = [{id:'', name:'Attachments (default)', path:'Attachments (default)'}];
+
+  if (canCreate){
+    const form = el(`<div class="card"><h2>New ${kind} entry</h2>
+      ${folderLoadError ? `<div class="banner err">Folder list error: ${esc(folderLoadError)}</div>` : ''}
+      <label>Date</label><input type="date" id="f_date" value="${new Date().toISOString().slice(0,10)}">
+      <label>${kind==='inward'?'From':'To'}</label><input id="f_party">
+      <label>${numberLabel}</label><input id="f_ref">
+      <label>Subject</label><textarea id="f_subject"></textarea>
+      <label>Remarks</label><textarea id="f_remarks"></textarea>
+      ${kind==='outward' ? `<label>Link to Inward (optional)</label><select id="f_link"><option value="">— none —</option>${inwardList.map(i=>`<option value="${i.id}">${esc(i.refNo)} — ${esc(i.subject).slice(0,40)}</option>`).join('')}</select>`:''}
+      <label>Target storage folder</label>
+      <select id="f_folder">${folderOptions.map(fo=>`<option value="${fo.id}">${esc(fo.path)}</option>`).join('')}</select>
+      <label>Attach document (camera or file)</label>
+      <input type="file" id="f_file" accept="image/*,application/pdf" capture="environment">
+      <div id="f_preview"></div>
+      <button class="btn-p btn-block" id="f_save">Save entry</button>
+      <div id="f_err"></div>
+    </div>`);
+    let rotation = 0, fileDataUrl=null, fileMime=null, fileName=null;
+    form.querySelector('#f_file').onchange = (e)=>{
+      const file = e.target.files[0]; if (!file) return;
+      fileName=file.name; fileMime=file.type;
+      const reader = new FileReader();
+      reader.onload = ()=>{ fileDataUrl = reader.result; rotation=0; renderPreview(); };
+      reader.readAsDataURL(file);
+    };
+    function renderPreview(){
+      const pv = form.querySelector('#f_preview'); pv.innerHTML='';
+      if (!fileDataUrl || !fileMime.startsWith('image/')) return;
+      const canvas = document.createElement('canvas'); canvas.style.marginTop='8px';
+      const img = new Image();
+      img.onload = ()=>{
+        const rad = rotation*Math.PI/180;
+        const swap = rotation%180!==0;
+        canvas.width = swap? img.height: img.width; canvas.height = swap? img.width: img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.translate(canvas.width/2, canvas.height/2); ctx.rotate(rad);
+        ctx.drawImage(img, -img.width/2, -img.height/2);
+      };
+      img.src = fileDataUrl;
+      pv.appendChild(canvas);
+      const rotBtn = el(`<button class="btn-o btn-block" type="button">Rotate 90°</button>`);
+      rotBtn.onclick = ()=>{ rotation=(rotation+90)%360; renderPreview(); };
+      pv.appendChild(rotBtn);
+    }
+    form.querySelector('#f_save').onclick = async ()=>{
+      const btn = form.querySelector('#f_save'); btn.disabled=true; btn.textContent='Saving…';
+      const errBox = form.querySelector('#f_err'); errBox.innerHTML='';
+      try{
+        let attachment = null;
+        const chosenFolder = form.querySelector('#f_folder').value;
+        if (fileDataUrl){
+          let base64 = fileDataUrl.split(',')[1];
+          if (fileMime.startsWith('image/') && rotation!==0){
+            base64 = await new Promise(resolve=>{
+              const canvas = form.querySelector('#f_preview canvas');
+              resolve(canvas.toDataURL(fileMime).split(',')[1]);
+            });
+          }
+          const up = await api('upload_file', {fileName, mimeType:fileMime, base64Data:base64, folderId: chosenFolder});
+          attachment = {id:up.id, name:up.name, url:up.url};
+        }
+        const payload = { date: form.querySelector('#f_date').value, refNo: form.querySelector('#f_ref').value,
+          subject: form.querySelector('#f_subject').value, remarks: form.querySelector('#f_remarks').value, attachment };
+        if (kind==='inward'){ payload.from = form.querySelector('#f_party').value; await api('create_inward', payload); }
+        else { payload.to = form.querySelector('#f_party').value; const lk = form.querySelector('#f_link').value; if (lk) payload.linkedInwardId=lk; await api('create_outward', payload); }
+        APP.screen=kind; render();
+      }catch(e){ errBox.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; btn.disabled=false; btn.textContent='Save entry'; }
+    };
+    w.appendChild(form);
+  }
+
+  const listCard = el(`<div class="card"><h2>${kind==='inward'?'Inward':'Outward'} register</h2>
+    <label>Search (${numberLabel}, subject, ${kind==='inward'?'from':'to'}, remarks)</label>
+    <input id="regSearch" placeholder="Type to filter...">
+    <div class="pill-row">
+      <button class="pill btn-sm" id="expExcel">⬇ Excel (.xlsx)</button>
+      <button class="pill btn-sm" id="expPdf">⬇ PDF</button>
+      ${kind==='inward' ? `<button class="pill btn-sm" id="expCombined">⬇ Excel — Inward + linked Outward (same row)</button>` : ''}
+    </div>
+    <div id="regRows"></div>
+  </div>`);
+  try{
+    const list = kind==='inward' ? (await api('list_inward')).inward : (await api('list_outward')).outward;
+    let outwardListForCombine = [];
+    listCard.querySelector('#expExcel').onclick = ()=> exportToExcel(kind, currentFiltered());
+    listCard.querySelector('#expPdf').onclick = ()=> exportToPdf(kind, currentFiltered());
+    if (kind==='inward'){
+      listCard.querySelector('#expCombined').onclick = async ()=>{
+        try{ outwardListForCombine = (await api('list_outward')).outward; }catch(e){}
+        exportInwardWithOutward(currentFiltered(), outwardListForCombine);
+      };
+    }
+    function matches(r, term){
+      if (!term) return true;
+      const hay = ((r.refNo||'')+' '+(r.subject||'')+' '+(r.from||r.to||'')+' '+(r.remarks||'')).toLowerCase();
+      return hay.includes(term.toLowerCase());
+    }
+    let currentTerm = '';
+    function currentFiltered(){ return list.filter(r=>matches(r, currentTerm)); }
+    function renderRows(){
+      const rowsBox = listCard.querySelector('#regRows'); rowsBox.innerHTML='';
+      const filtered = currentFiltered();
+      if (!filtered.length){ rowsBox.appendChild(el(`<div class="empty">No matching entries.</div>`)); return; }
+      const canEdit = isAdmin || perms[kind+'_edit'];
+      const canDelete = isAdmin;
+      filtered.slice(0,80).forEach(r=>{
+        const statusTag = kind==='inward' ? `<span class="tag ${r.status==='Disposed'?'g':r.status==='Outward Issued'?'g':r.status==='Assigned'?'o':'r'}">${esc(r.status)}</span>` : '';
+        const row = el(`<div class="row" style="flex-direction:column;align-items:stretch;">
+          <div><b>${esc(r.subject||'(no subject)')}</b> ${statusTag}
+          <div class="meta">${esc(numberLabel)}: ${esc(r.refNo||'')} · ${r.date||''} · ${esc(r.from||r.to||'')}${r.attachment?` · <a href="${r.attachment.url}" target="_blank">📎 View file</a>`:''}</div></div>
+          ${(canEdit||canDelete) ? `<div style="display:flex;gap:6px;margin-top:6px;">
+            ${canEdit?`<button class="btn-o btn-sm" data-act="edit">Edit</button>`:''}
+            ${canDelete?`<button class="btn-d btn-sm" data-act="del">Delete</button>`:''}
+          </div>`:''}
+          <div class="editBox hidden" style="margin-top:8px;"></div>
+        </div>`);
+        const editBtn = row.querySelector('[data-act=edit]');
+        const delBtn = row.querySelector('[data-act=del]');
+        if (editBtn) editBtn.onclick = ()=>{
+          const box = row.querySelector('.editBox');
+          box.classList.toggle('hidden');
+          if (box.dataset.built) return; box.dataset.built='1';
+          box.appendChild(el(`<div><label>Date</label><input type="date" id="e_date" value="${r.date||''}"></div>`));
+          box.appendChild(el(`<div><label>${kind==='inward'?'From':'To'}</label><input id="e_party" value="${esc(r.from||r.to||'')}"></div>`));
+          box.appendChild(el(`<div><label>${numberLabel}</label><input id="e_ref" value="${esc(r.refNo||'')}"></div>`));
+          box.appendChild(el(`<div><label>Subject</label><textarea id="e_subject">${esc(r.subject||'')}</textarea></div>`));
+          box.appendChild(el(`<div><label>Remarks</label><textarea id="e_remarks">${esc(r.remarks||'')}</textarea></div>`));
+          const saveBtn = el(`<button class="btn-p btn-block btn-sm">Save changes</button>`);
+          const errBox = el(`<div></div>`);
+          box.appendChild(saveBtn); box.appendChild(errBox);
+          saveBtn.onclick = async ()=>{
+            saveBtn.disabled=true; saveBtn.textContent='Saving…';
+            try{
+              const payload = { id:r.id, date: box.querySelector('#e_date').value, refNo: box.querySelector('#e_ref').value,
+                subject: box.querySelector('#e_subject').value, remarks: box.querySelector('#e_remarks').value };
+              if (kind==='inward'){ payload.from = box.querySelector('#e_party').value; await api('update_inward', payload); }
+              else { payload.to = box.querySelector('#e_party').value; await api('update_outward', payload); }
+              APP.screen=kind; render();
+            }catch(e){ errBox.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; saveBtn.disabled=false; saveBtn.textContent='Save changes'; }
+          };
+        };
+        if (delBtn) delBtn.onclick = async ()=>{
+          if (!confirm(`Delete this ${kind} entry (${r.refNo||'no number'})? This cannot be undone.`)) return;
+          try{ await api(kind==='inward'?'delete_inward':'delete_outward', {id:r.id}); APP.screen=kind; render(); }
+          catch(e){ alert(e.message); }
+        };
+        rowsBox.appendChild(row);
+      });
+    }
+    listCard.querySelector('#regSearch').oninput = (e)=>{ currentTerm = e.target.value; renderRows(); };
+    renderRows();
+  }catch(e){ listCard.appendChild(el(`<div class="banner err">${esc(e.message)}</div>`)); }
+  w.appendChild(listCard);
+
+  if (APP.user.role==='admin' && kind==='inward'){
+    const distCard = el(`<div class="card"><h2>Assign / distribute</h2></div>`);
+    try{
+      const [inw, emps] = await Promise.all([api('list_inward'), api('list_employees')]);
+      const unassigned = inw.inward.filter(x=>!x.assignedTo);
+      if (!unassigned.length) distCard.appendChild(el(`<div class="empty">Nothing pending assignment.</div>`));
+      unassigned.slice(0,20).forEach(r=>{
+        const row = el(`<div class="row" style="flex-direction:column;align-items:stretch;">
+          <div><b>${esc(r.subject)}</b><div class="meta">${esc(r.refNo)} · ${r.date}</div></div>
+          <div style="display:flex;gap:6px;margin-top:6px;">
+            <select style="flex:1;">${emps.employees.filter(e=>e.accessStatus==='active').map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select>
+            <button class="btn-p btn-sm">Assign</button>
+          </div></div>`);
+        row.querySelector('button').onclick = async ()=>{
+          const uid = row.querySelector('select').value;
+          await api('assign_entry', {inwardId:r.id, assignedTo:uid});
+          APP.screen='inward'; render();
+        };
+        distCard.appendChild(row);
+      });
+    }catch(e){ distCard.appendChild(el(`<div class="banner err">${esc(e.message)}</div>`)); }
+    w.appendChild(distCard);
+  }
+  return w;
+}
+
+/* ============ EXPORT: EXCEL / PDF / COMBINED ============ */
+function regRows(kind, list){
+  const numberLabel = kind==='inward' ? 'Inward Number' : 'Outward Number';
+  if (kind==='inward'){
+    return {
+      headers: ['Date', numberLabel, 'From', 'Subject', 'Remarks', 'Status', 'Priority', 'Due Date', 'Entered By', 'Attachment'],
+      rows: list.map(r=>[r.date, r.refNo, r.from, r.subject, r.remarks, r.status, r.priority||'', r.dueDate||'', r.enteredBy, r.attachment?r.attachment.name:''])
+    };
+  }
+  return {
+    headers: ['Date', numberLabel, 'To', 'Subject', 'Remarks', 'Linked Inward No.', 'Entered By', 'Attachment'],
+    rows: list.map(r=>[r.date, r.refNo, r.to, r.subject, r.remarks, r.linkedInwardId||'', r.enteredBy, r.attachment?r.attachment.name:''])
+  };
+}
+function exportToExcel(kind, list){
+  if (!list.length){ alert('No entries to export.'); return; }
+  const {headers, rows} = regRows(kind, list);
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, kind==='inward'?'Inward':'Outward');
+  XLSX.writeFile(wb, `${kind}-register-${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+function exportInwardWithOutward(inwardList, outwardList){
+  if (!inwardList.length){ alert('No inward entries to export.'); return; }
+  const inHeaders = ['Date','Inward Number','From','Subject','Remarks','Status','Linked Outward Number(s)','Linked Outward Date(s)','Linked Outward Subject(s)'];
+  const inRows = inwardList.map(r=>{
+    const linked = outwardList.filter(o=>o.linkedInwardId===r.id);
+    return [r.date, r.refNo, r.from, r.subject, r.remarks, r.status, linked.map(o=>o.refNo).join('; '), linked.map(o=>o.date).join('; '), linked.map(o=>o.subject).join('; ')];
+  });
+  const outHeaders = ['Date','Outward Number','To','Subject','Remarks','Linked Inward Number'];
+  const outRows = outwardList.map(o=>{
+    const linkedIn = inwardList.filter(i=>i.id===o.linkedInwardId)[0];
+    return [o.date, o.refNo, o.to, o.subject, o.remarks, linkedIn ? linkedIn.refNo : ''];
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([inHeaders, ...inRows]), 'Inward');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([outHeaders, ...outRows]), 'Outward');
+  XLSX.writeFile(wb, `inward-with-linked-outward-${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+function exportToPdf(kind, list){
+  if (!list.length){ alert('No entries to export.'); return; }
+  const {headers, rows} = regRows(kind, list);
+  const title = (kind==='inward'?'Inward':'Outward') + ' Register Abstract';
+  const tableHtml = `<table border="1" cellspacing="0" cellpadding="5" style="border-collapse:collapse;width:100%;font-family:sans-serif;font-size:11px;">
+    <thead><tr>${headers.map(h=>`<th style="background:#14456b;color:#fff;text-align:left;">${esc(h)}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map(row=>`<tr>${row.map(c=>`<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody>
+  </table>`;
+  const win = window.open('', '_blank');
+  win.document.write(`<html><head><title>${title}</title></head><body>
+    <h2 style="font-family:sans-serif;">${title}</h2>
+    <p style="font-family:sans-serif;font-size:12px;color:#555;">Generated ${new Date().toLocaleString()}</p>
+    ${tableHtml}
+    <script>window.onload=()=>window.print();<\/script>
+  </body></html>`);
+  win.document.close();
+}
+
+/* ============ SCREENS: my work ============ */
+async function screenMyWork(){
+  const w = el(`<div class="card"><h2>My assigned work</h2></div>`);
+  try{
+    const {items} = await api('my_work');
+    if (!items.length) w.appendChild(el(`<div class="empty">Nothing assigned to you right now.</div>`));
+    items.forEach(r=>{
+      const row = el(`<div class="row" style="flex-direction:column;align-items:stretch;">
+        <div><b>${esc(r.subject)}</b><div class="meta">${esc(r.refNo)} · Due: ${r.dueDate||'—'} · Priority: ${r.priority||'Normal'}</div>
+        <div class="meta">Status: ${esc(r.status)}</div></div>
+        <div style="display:flex;gap:6px;margin-top:6px;">
+          <select style="flex:1;"><option value="Under Process">Under Process</option><option value="Reply Prepared">Reply Prepared</option><option value="Disposed">Disposed</option><option value="Returned / Reassigned">Return / Reassign</option></select>
+          <button class="btn-p btn-sm">Update</button>
+        </div></div>`);
+      row.querySelector('button').onclick = async ()=>{
+        await api('update_entry_status', {inwardId:r.id, status: row.querySelector('select').value});
+        APP.screen='mywork'; render();
+      };
+      w.appendChild(row);
+    });
+  }catch(e){ w.appendChild(el(`<div class="banner err">${esc(e.message)}</div>`)); }
+  return w;
+}
+
+/* ============ SCREENS: attendance ============ */
+async function screenAttendance(){
+  const w = document.createElement('div');
+  const perms = APP.user.permissions||{}; const isAdmin=APP.user.role==='admin';
+  if (isAdmin || perms.attendance_manage){
+    const form = el(`<div class="card"><h2>Record attendance</h2>
+      <label>Date</label><input type="date" id="a_date" value="${new Date().toISOString().slice(0,10)}">
+      <label>Name</label><input id="a_name">
+      <div class="pill-row" id="a_status"><button class="pill active" data-v="Present">Present</button><button class="pill" data-v="Absent">Absent</button></div>
+      <label>Remarks</label><textarea id="a_remarks"></textarea>
+      <button class="btn-p btn-block" id="a_save">Save</button>
+      <div id="a_err"></div>
+    </div>`);
+    form.querySelectorAll('#a_status .pill').forEach(p=>p.onclick=()=>{form.querySelectorAll('#a_status .pill').forEach(x=>x.classList.remove('active'));p.classList.add('active');});
+    form.querySelector('#a_save').onclick = async ()=>{
+      try{
+        await api('record_attendance', {date:form.querySelector('#a_date').value, personName:form.querySelector('#a_name').value,
+          status:form.querySelector('#a_status .active').dataset.v, remarks:form.querySelector('#a_remarks').value});
+        APP.screen='attendance'; render();
+      }catch(e){ form.querySelector('#a_err').innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
+    };
+    w.appendChild(form);
+  }
+  const listCard = el(`<div class="card"><h2>Recent attendance</h2></div>`);
+  try{
+    const {attendance} = await api('list_attendance');
+    if (!attendance.length) listCard.appendChild(el(`<div class="empty">No records yet.</div>`));
+    attendance.slice(0,60).forEach(r=>listCard.appendChild(el(`<div class="row"><span><b>${esc(r.personName)}</b> <span class="meta">${r.date}</span></span><span class="tag ${r.status==='Present'?'g':'r'}">${r.status}</span></div>`)));
+  }catch(e){ listCard.appendChild(el(`<div class="banner err">${esc(e.message)}</div>`)); }
+  w.appendChild(listCard);
+  return w;
+}
+
+/* ============ SCREENS: users & permissions (admin) ============ */
+const PERM_KEYS = ['inward_view','inward_create','inward_edit','outward_view','outward_create','outward_edit','attendance_view','attendance_manage','storage_view','storage_download','storage_modify','storage_delete','reports_view'];
+async function screenUsers(){
+  const w = document.createElement('div');
+  const form = el(`<div class="card"><h2>Create employee / user</h2>
+    <label>Full name</label><input id="u_name">
+    <label>Employee code</label><input id="u_code">
+    <label>Designation</label><input id="u_desig">
+    <label>Section</label><input id="u_section">
+    <label>Mobile</label><input id="u_mobile">
+    <label>Email</label><input id="u_email">
+    <label>Role</label><select id="u_role"><option value="field_officer">Field Officer</option><option value="work_inspector">Work Inspector</option><option value="admin">Administrator</option></select>
+    <label>Username</label><input id="u_user">
+    <label>Initial password</label><input id="u_pass" type="password">
+    <button class="btn-p btn-block" id="u_save">Create user</button>
+    <div id="u_err"></div>
+  </div>`);
+  form.querySelector('#u_save').onclick = async ()=>{
+    try{
+      await api('create_employee', {
+        name:form.querySelector('#u_name').value, employeeCode:form.querySelector('#u_code').value,
+        designation:form.querySelector('#u_desig').value, section:form.querySelector('#u_section').value,
+        mobile:form.querySelector('#u_mobile').value, email:form.querySelector('#u_email').value,
+        role:form.querySelector('#u_role').value, username:form.querySelector('#u_user').value, password:form.querySelector('#u_pass').value
+      });
+      APP.screen='users'; render();
+    }catch(e){ form.querySelector('#u_err').innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
+  };
+  w.appendChild(form);
+
+  const listCard = el(`<div class="card"><h2>All users</h2></div>`);
+  try{
+    const {employees} = await api('list_employees');
+    employees.forEach(u=>{
+      const box = el(`<div class="row" style="flex-direction:column;align-items:stretch;">
+        <div><b>${esc(u.name)}</b> <span class="tag ${u.accessStatus==='active'?'g':'r'}">${u.accessStatus}</span>
+        <div class="meta">${esc(u.username)} · ${roleLabel(u.role)}</div></div>
+        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+          <button class="btn-o btn-sm" data-act="toggle">${u.accessStatus==='active'?'Deactivate':'Activate'}</button>
+          <button class="btn-o btn-sm" data-act="reset">Reset password</button>
+          <button class="btn-o btn-sm" data-act="perm">Permissions</button>
+        </div>
+        <div class="permBox hidden"></div>
+      </div>`);
+      box.querySelector('[data-act=toggle]').onclick = async ()=>{ await api('set_access_status',{id:u.id, status: u.accessStatus==='active'?'inactive':'active'}); APP.screen='users'; render(); };
+      box.querySelector('[data-act=reset]').onclick = async ()=>{ const np = prompt('New password (min 8 chars) for '+u.name); if(np&&np.length>=8) await api('reset_password',{id:u.id,newPassword:np}); };
+      box.querySelector('[data-act=perm]').onclick = ()=>{
+        const pb = box.querySelector('.permBox'); pb.classList.toggle('hidden'); if (pb.dataset.built) return; pb.dataset.built='1';
+        PERM_KEYS.forEach(k=>{
+          const row = el(`<div class="switchrow"><span>${k.replace(/_/g,' ')}</span><input type="checkbox" ${u.permissions&&u.permissions[k]?'checked':''}></div>`);
+          row.querySelector('input').onchange = async (e)=>{ u.permissions = u.permissions||{}; u.permissions[k]=e.target.checked; await api('set_permissions',{id:u.id, permissions:u.permissions}); };
+          pb.appendChild(row);
+        });
+        pb.appendChild(el(`<button class="btn-o btn-block btn-sm" style="margin-top:6px;">Close</button>`)).onclick=()=>pb.classList.add('hidden');
+      };
+      listCard.appendChild(box);
+    });
+  }catch(e){ listCard.appendChild(el(`<div class="banner err">${esc(e.message)}</div>`)); }
+  w.appendChild(listCard);
+  return w;
+}
+
+/* ============ SCREENS: storage ============ */
+async function screenStorage(){
+  const perms = APP.user.permissions||{}; const isAdmin = APP.user.role==='admin';
+  let folderOptions = [];
+  let folderLoadError = '';
+  try{ folderOptions = (await api('list_folder_tree')).folders; }catch(e){ folderLoadError = e.message; }
+  if (!folderOptions.length) folderOptions = [{id:'', name:'Attachments (default)', path:'Attachments (default)'}];
+
+  const w = el(`<div class="card"><h2>Central storage</h2>
+    ${folderLoadError ? `<div class="banner err">Folder list error: ${esc(folderLoadError)}</div>` : ''}
+    ${isAdmin ? `<label>Create new folder</label>
+    <div style="display:flex;gap:6px;">
+      <select id="s_parent" style="flex:1;">${folderOptions.map(fo=>`<option value="${fo.id}">${esc(fo.path)}</option>`).join('')}</select>
+    </div>
+    <input id="s_newfolder" placeholder="New folder name" style="margin-top:6px;">
+    <button class="btn-o btn-block btn-sm" id="s_makefolder">＋ Create folder</button>
+    <div id="s_folderErr"></div>` : ''}
+    <label style="margin-top:10px;">Upload a file to</label>
+    <select id="s_folder">${folderOptions.map(fo=>`<option value="${fo.id}">${esc(fo.path)}</option>`).join('')}</select>
+    <input type="file" id="s_file" style="margin-top:6px;">
+    <label>Search files (all folders)</label>
+    <input id="s_search" placeholder="Type a file name...">
+    <div id="s_list" style="margin-top:8px;"></div>
+  </div>`);
+
+  if (isAdmin){
+    w.querySelector('#s_makefolder').onclick = async ()=>{
+      const errBox = w.querySelector('#s_folderErr'); errBox.innerHTML='';
+      const name = w.querySelector('#s_newfolder').value.trim();
+      if (!name){ errBox.innerHTML = `<div class="banner err">Enter a folder name first.</div>`; return; }
+      const btn = w.querySelector('#s_makefolder'); btn.disabled=true; btn.textContent='Creating…';
+      try{
+        const parentVal = w.querySelector('#s_parent').value;
+        await api('create_folder', {name, parentId: parentVal || undefined});
+        APP.screen='storage'; render();
+      }catch(e){
+        errBox.innerHTML = `<div class="banner err">${esc(e.message)}</div>`;
+        btn.disabled=false; btn.textContent='＋ Create folder';
+      }
+    };
+  }
+
+  const listBox = w.querySelector('#s_list');
+  async function refresh(term){
+    listBox.innerHTML = '<div class="empty">Loading…</div>';
+    try{
+      const {files} = await api('search_files', {term: term||''});
+      listBox.innerHTML='';
+      if (!files.length){ listBox.appendChild(el(`<div class="empty">No files found.</div>`)); return; }
+      files.forEach(f=>{
+        const row = el(`<div class="row" style="flex-direction:column;align-items:stretch;">
+          <div><b>${esc(f.name)}</b><div class="meta">${esc(f.folderPath)} · ${new Date(f.updated).toLocaleDateString()}</div></div>
+          <div style="display:flex;gap:6px;margin-top:6px;">
+            <a href="${f.url}" target="_blank" class="btn-o btn-sm">View</a>
+            ${(isAdmin||perms.storage_modify) ? `<button class="btn-o btn-sm" data-act="rename">Rename</button>`:''}
+            ${(isAdmin||perms.storage_delete) ? `<button class="btn-d btn-sm" data-act="delete">Delete</button>`:''}
+          </div></div>`);
+        const renameBtn = row.querySelector('[data-act=rename]');
+        if (renameBtn) renameBtn.onclick = async ()=>{
+          const nn = prompt('New file name', f.name);
+          if (nn && nn.trim()){ await api('rename_file', {fileId:f.id, newName:nn.trim()}); refresh(w.querySelector('#s_search').value); }
+        };
+        const deleteBtn = row.querySelector('[data-act=delete]');
+        if (deleteBtn) deleteBtn.onclick = async ()=>{
+          if (!confirm(`Delete "${f.name}"? This moves it to Drive trash.`)) return;
+          try{ await api('delete_file', {fileId:f.id}); refresh(w.querySelector('#s_search').value); }
+          catch(e){ alert(e.message); }
+        };
+        listBox.appendChild(row);
+      });
+    }catch(e){ listBox.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
+  }
+  w.querySelector('#s_file').onchange = async (e)=>{
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async ()=>{
+      await api('upload_file', {fileName:file.name, mimeType:file.type, base64Data:reader.result.split(',')[1], folderId: w.querySelector('#s_folder').value});
+      refresh(w.querySelector('#s_search').value);
+    };
+    reader.readAsDataURL(file);
+  };
+  let searchTimer;
+  w.querySelector('#s_search').oninput = (e)=>{
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(()=>refresh(e.target.value), 300);
+  };
+  refresh('');
+  return w;
+}
+
+/* ============ SCREENS: abstract (tabular, with file view) ============ */
+async function screenAbstract(){
+  const w = document.createElement('div');
+  const perms = APP.user.permissions||{}; const isAdmin = APP.user.role==='admin';
+  const canInward = isAdmin || perms.inward_view;
+  const canOutward = isAdmin || perms.outward_view;
+
+  if (canInward){
+    const card = el(`<div class="card"><h2>Inward abstract</h2><div style="overflow-x:auto;"><table id="inTable">
+      <thead><tr><th>Date</th><th>Inward No.</th><th>From</th><th>Subject</th><th>Status</th><th>File</th></tr></thead>
+      <tbody></tbody></table></div></div>`);
+    try{
+      const {inward} = await api('list_inward');
+      const tbody = card.querySelector('tbody');
+      if (!inward.length) tbody.appendChild(el(`<tr><td colspan="6" class="empty">No entries.</td></tr>`));
+      inward.forEach(r=>tbody.appendChild(el(`<tr><td>${r.date||''}</td><td>${esc(r.refNo)}</td><td>${esc(r.from)}</td><td>${esc(r.subject)}</td><td>${esc(r.status)}</td>
+        <td>${r.attachment? `<a href="${r.attachment.url}" target="_blank">View</a>`:'—'}</td></tr>`)));
+    }catch(e){ card.appendChild(el(`<div class="banner err">${esc(e.message)}</div>`)); }
+    w.appendChild(card);
+  }
+  if (canOutward){
+    const card = el(`<div class="card"><h2>Outward abstract</h2><div style="overflow-x:auto;"><table id="outTable">
+      <thead><tr><th>Date</th><th>Outward No.</th><th>To</th><th>Subject</th><th>Linked Inward</th><th>File</th></tr></thead>
+      <tbody></tbody></table></div></div>`);
+    try{
+      const {outward} = await api('list_outward');
+      const tbody = card.querySelector('tbody');
+      if (!outward.length) tbody.appendChild(el(`<tr><td colspan="6" class="empty">No entries.</td></tr>`));
+      outward.forEach(r=>tbody.appendChild(el(`<tr><td>${r.date||''}</td><td>${esc(r.refNo)}</td><td>${esc(r.to)}</td><td>${esc(r.subject)}</td><td>${esc(r.linkedInwardId||'—')}</td>
+        <td>${r.attachment? `<a href="${r.attachment.url}" target="_blank">View</a>`:'—'}</td></tr>`)));
+    }catch(e){ card.appendChild(el(`<div class="banner err">${esc(e.message)}</div>`)); }
+    w.appendChild(card);
+  }
+  return w;
+}
+
+/* ============ SCREENS: audit ============ */
+async function screenAudit(){
+  const w = el(`<div class="card"><h2>Audit log</h2></div>`);
+  try{
+    const {audit} = await api('audit_log');
+    if (!audit.length) w.appendChild(el(`<div class="empty">No activity yet.</div>`));
+    audit.slice(0,150).forEach(a=>w.appendChild(el(`<div class="row"><div><b>${esc(a.action)}</b><div class="meta">${esc(a.actor)} · ${new Date(a.time).toLocaleString()}</div><div class="meta">${esc(a.description)} ${a.refNo?('· '+esc(a.refNo)):''}</div></div></div>`)));
+  }catch(e){ w.appendChild(el(`<div class="banner err">${esc(e.message)}</div>`)); }
+  return w;
+}
+
+render();
+</script>
+</body></html>
