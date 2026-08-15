@@ -2,6 +2,13 @@
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>I&CADD Records Management System</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#14456b">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ICADD Records">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root{--blue:#14456b;--blue2:#1c5a8a;--bg:#f4f6f8;--panel:#fff;--line:#dbe2e8;--ink:#1c2b36;--muted:#5c6b78;--ok:#1f7a4d;--warn:#b3541c;--danger:#a63a3a;}
@@ -699,6 +706,10 @@ async function screenAudit(){
     audit.slice(0,150).forEach(a=>w.appendChild(el(`<div class="row"><div><b>${esc(a.action)}</b><div class="meta">${esc(a.actor)} · ${new Date(a.time).toLocaleString()}</div><div class="meta">${esc(a.description)} ${a.refNo?('· '+esc(a.refNo)):''}</div></div></div>`)));
   }catch(e){ w.appendChild(el(`<div class="banner err">${esc(e.message)}</div>`)); }
   return w;
+}
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(()=>{});
 }
 
 render();
