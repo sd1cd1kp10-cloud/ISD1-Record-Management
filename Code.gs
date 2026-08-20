@@ -273,12 +273,28 @@ var ACTIONS = {
     return {ok:true, id:rec.id};
   },
 
-  bulk_create_inward: function(p, state){
+  bulk_upsert_inward: function(p, state){
     var actor = requirePerm(state, p.token, 'inward_create');
     var rows = p.rows || [];
-    var created = 0, skipped = [];
+    var replaceDuplicates = !!p.replaceDuplicates;
+    var created = 0, updated = 0, skipped = [];
     rows.forEach(function(row, idx){
       if (!row.subject || !row.refNo){ skipped.push('Row '+(idx+2)+': missing Inward Number or Subject'); return; }
+      var existing = state.inward.filter(function(x){ return String(x.refNo)===String(row.refNo); })[0];
+      if (existing){
+        if (replaceDuplicates){
+          existing.date = row.date||existing.date;
+          existing.from = row.from||existing.from;
+          existing.subject = row.subject;
+          existing.remarks = row.remarks||'';
+          existing.actionHistory = existing.actionHistory || [];
+          existing.actionHistory.push({action:'Replaced via upload', by:actor.username, at:new Date().toISOString()});
+          updated++;
+        } else {
+          skipped.push('Inward Number '+row.refNo+' already exists — skipped (not replaced)');
+        }
+        return;
+      }
       state.inward.unshift({
         id:'in_'+Date.now()+'_'+idx, date:row.date||'', from:row.from||'', refNo:row.refNo, subject:row.subject,
         remarks:row.remarks||'', attachment:null, status:'Received',
@@ -288,21 +304,36 @@ var ACTIONS = {
       created++;
     });
     save('inward', state.f, state.inward);
-    logAudit(state, actor.username, 'INWARD_BULK_IMPORT', created+' rows imported'+(skipped.length? ', '+skipped.length+' skipped':''));
-    return {ok:true, created:created, skipped:skipped};
+    logAudit(state, actor.username, 'INWARD_BULK_UPSERT', created+' created, '+updated+' replaced'+(skipped.length? ', '+skipped.length+' skipped':''));
+    return {ok:true, created:created, updated:updated, skipped:skipped};
   },
 
-  bulk_create_outward: function(p, state){
+  bulk_upsert_outward: function(p, state){
     var actor = requirePerm(state, p.token, 'outward_create');
     var rows = p.rows || [];
-    var created = 0, skipped = [];
+    var replaceDuplicates = !!p.replaceDuplicates;
+    var created = 0, updated = 0, skipped = [];
     rows.forEach(function(row, idx){
       if (!row.subject || !row.refNo){ skipped.push('Row '+(idx+2)+': missing Outward Number or Subject'); return; }
       var linkedId = null;
       if (row.linkedInwardNumber){
-        var match = state.inward.filter(function(x){ return x.refNo===String(row.linkedInwardNumber); })[0];
+        var match = state.inward.filter(function(x){ return String(x.refNo)===String(row.linkedInwardNumber); })[0];
         if (match) linkedId = match.id;
         else skipped.push('Row '+(idx+2)+': linked Inward Number "'+row.linkedInwardNumber+'" not found (saved without link)');
+      }
+      var existing = state.outward.filter(function(x){ return String(x.refNo)===String(row.refNo); })[0];
+      if (existing){
+        if (replaceDuplicates){
+          existing.date = row.date||existing.date;
+          existing.to = row.to||existing.to;
+          existing.subject = row.subject;
+          existing.remarks = row.remarks||'';
+          if (linkedId) existing.linkedInwardId = linkedId;
+          updated++;
+        } else {
+          skipped.push('Outward Number '+row.refNo+' already exists — skipped (not replaced)');
+        }
+        return;
       }
       state.outward.unshift({
         id:'out_'+Date.now()+'_'+idx, date:row.date||'', to:row.to||'', refNo:row.refNo, subject:row.subject,
@@ -317,8 +348,34 @@ var ACTIONS = {
     });
     save('outward', state.f, state.outward);
     save('inward', state.f, state.inward);
-    logAudit(state, actor.username, 'OUTWARD_BULK_IMPORT', created+' rows imported'+(skipped.length? ', '+skipped.length+' skipped':''));
-    return {ok:true, created:created, skipped:skipped};
+    logAudit(state, actor.username, 'OUTWARD_BULK_UPSERT', created+' created, '+updated+' replaced'+(skipped.length? ', '+skipped.length+' skipped':''));
+    return {ok:true, created:created, updated:updated, skipped:skipped};
+  },
+
+  bulk_delete_inward: function(p, state){
+    var actor = requireAdmin(state, p.token);
+    var ids = p.ids || [];
+    var removed = [];
+    state.inward = state.inward.filter(function(x){
+      if (ids.indexOf(x.id)!==-1){ removed.push(x.refNo); return false; }
+      return true;
+    });
+    save('inward', state.f, state.inward);
+    logAudit(state, actor.username, 'INWARD_BULK_DELETED', removed.length+' entries deleted: '+removed.join(', '));
+    return {ok:true, deleted: removed.length};
+  },
+
+  bulk_delete_outward: function(p, state){
+    var actor = requireAdmin(state, p.token);
+    var ids = p.ids || [];
+    var removed = [];
+    state.outward = state.outward.filter(function(x){
+      if (ids.indexOf(x.id)!==-1){ removed.push(x.refNo); return false; }
+      return true;
+    });
+    save('outward', state.f, state.outward);
+    logAudit(state, actor.username, 'OUTWARD_BULK_DELETED', removed.length+' entries deleted: '+removed.join(', '));
+    return {ok:true, deleted: removed.length};
   },
 
   list_outward: function(p, state){

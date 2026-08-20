@@ -219,6 +219,7 @@ async function screenDashboard(){
   if (APP.user.role==='admin'){
     try{
       const s = await api('dashboard_stats');
+      const pendingCount = Object.entries(s.inwardByStatus||{}).reduce((sum,[k,v])=> k==='Disposed' ? sum : sum+v, 0);
       w.appendChild(el(`<div class="card"><h2>Overview</h2>
         <div class="stat"><b>${s.inwardTotal}</b><span>Inward</span></div>
         <div class="stat"><b>${s.outwardTotal}</b><span>Outward</span></div>
@@ -227,6 +228,13 @@ async function screenDashboard(){
         <div class="stat"><b>${s.attendanceToday.present}</b><span>Present today</span></div>
         <div class="stat"><b>${s.attendanceToday.absent}</b><span>Absent today</span></div>
       </div>`));
+      const pendingCard = el(`<div class="card">
+        <h2>Pending Inward</h2>
+        <div class="stat" style="background:#fbeee2;"><b>${pendingCount}</b><span>Pending</span></div>
+        <div style="margin-top:8px;"><a href="#" id="viewAllPending">View all pending →</a></div>
+      </div>`);
+      pendingCard.querySelector('#viewAllPending').onclick = (e)=>{ e.preventDefault(); APP.pendingOnly = true; APP.screen='inward'; render(); };
+      w.appendChild(pendingCard);
       const statusRows = Object.entries(s.inwardByStatus||{}).map(([k,v])=>`<div class="row"><span>${esc(k)}</span><b>${v}</b></div>`).join('') || '<div class="empty">No inward yet</div>';
       w.appendChild(el(`<div class="card"><h2>Inward by status</h2>${statusRows}</div>`));
     }catch(e){ w.appendChild(el(`<div class="banner err">${esc(e.message)}</div>`)); }
@@ -241,9 +249,26 @@ async function screenRegister(kind){
   const w = document.createElement('div');
   const perms = APP.user.permissions||{}; const isAdmin = APP.user.role==='admin';
   const canCreate = isAdmin || perms[kind+'_create'];
+  const canDelete = isAdmin;
   const numberLabel = kind==='inward' ? 'Inward Number' : 'Outward Number';
-  let inwardList = [];
+
+  // Fetch the full list ONCE — reused for the form's duplicate check, the outward-link dropdown,
+  // bulk-import duplicate detection, and the row list itself.
+  let list = [];
+  let listLoadError = '';
+  try{ list = kind==='inward' ? (await api('list_inward')).inward : (await api('list_outward')).outward; }
+  catch(e){ listLoadError = e.message; }
+  let inwardList = list;
   if (kind==='outward'){ try{ inwardList = (await api('list_inward')).inward; }catch(e){} }
+
+  // Consume the "pending only" flag set from the dashboard's "View all pending" link (inward only)
+  const applyPendingFilter = (kind==='inward' && APP.pendingOnly);
+  APP.pendingOnly = false;
+
+  // Consume a prefill request to open the Outward form pre-linked to a specific Inward entry
+  const outwardPrefill = (kind==='outward') ? APP.prefillOutwardFor : null;
+  APP.prefillOutwardFor = null;
+
   let folderOptions = [];
   let folderLoadError = '';
   try{ folderOptions = (await api('list_folder_tree')).folders; }catch(e){ folderLoadError = e.message; }
@@ -257,7 +282,7 @@ async function screenRegister(kind){
       <label>${numberLabel}</label><input id="f_ref">
       <label>Subject</label><textarea id="f_subject"></textarea>
       <label>Remarks</label><textarea id="f_remarks"></textarea>
-      ${kind==='outward' ? `<label>Link to Inward (optional)</label><select id="f_link"><option value="">— none —</option>${inwardList.map(i=>`<option value="${i.id}">${esc(i.refNo)} — ${esc(i.subject).slice(0,40)}</option>`).join('')}</select>`:''}
+      ${kind==='outward' ? `<label>Link to Inward (optional)</label><select id="f_link"><option value="">— none —</option>${inwardList.map(i=>`<option value="${i.id}" ${outwardPrefill&&outwardPrefill.id===i.id?'selected':''}>${esc(i.refNo)} — ${esc(i.subject).slice(0,40)}</option>`).join('')}</select>`:''}
       <label>Target storage folder</label>
       <select id="f_folder">${folderOptions.map(fo=>`<option value="${fo.id}">${esc(fo.path)}</option>`).join('')}</select>
       <label>Attach document (camera or file)</label>
@@ -267,6 +292,9 @@ async function screenRegister(kind){
       <button class="btn-p btn-block" id="f_save">Save entry</button>
       <div id="f_err"></div>
     </div>`);
+    if (outwardPrefill){
+      form.insertBefore(el(`<div class="banner info">Linked to Inward ${esc(outwardPrefill.refNo)} — "${esc(outwardPrefill.subject).slice(0,60)}"</div>`), form.firstChild.nextSibling);
+    }
     let rotation = 0, fileDataUrl=null, fileMime=null, fileName=null, scannedPageCount=0;
     form.querySelector('#f_file').onchange = (e)=>{
       const file = e.target.files[0]; if (!file) return;
@@ -310,6 +338,14 @@ async function screenRegister(kind){
       const btn = form.querySelector('#f_save'); btn.disabled=true; btn.textContent='Saving…';
       const errBox = form.querySelector('#f_err'); errBox.innerHTML='';
       try{
+        const refNoVal = form.querySelector('#f_ref').value.trim();
+        const existing = list.find(x=>String(x.refNo)===String(refNoVal));
+        let replaceDuplicates = false;
+        if (existing){
+          const ok = confirm(`An ${kind} entry with ${numberLabel} "${refNoVal}" already exists (Subject: "${existing.subject}"). Do you want to replace the existing entry with this new data?`);
+          if (!ok){ errBox.innerHTML = `<div class="banner info">Not saved — ${numberLabel} "${refNoVal}" already exists.</div>`; btn.disabled=false; btn.textContent='Save entry'; return; }
+          replaceDuplicates = true;
+        }
         let attachment = null;
         const chosenFolder = form.querySelector('#f_folder').value;
         if (fileDataUrl){
@@ -323,10 +359,28 @@ async function screenRegister(kind){
           const up = await api('upload_file', {fileName, mimeType:fileMime, base64Data:base64, folderId: chosenFolder});
           attachment = {id:up.id, name:up.name, url:up.url};
         }
-        const payload = { date: form.querySelector('#f_date').value, refNo: form.querySelector('#f_ref').value,
-          subject: form.querySelector('#f_subject').value, remarks: form.querySelector('#f_remarks').value, attachment };
-        if (kind==='inward'){ payload.from = form.querySelector('#f_party').value; await api('create_inward', payload); }
-        else { payload.to = form.querySelector('#f_party').value; const lk = form.querySelector('#f_link').value; if (lk) payload.linkedInwardId=lk; await api('create_outward', payload); }
+        const row = { date: form.querySelector('#f_date').value, refNo: refNoVal,
+          subject: form.querySelector('#f_subject').value, remarks: form.querySelector('#f_remarks').value };
+        if (kind==='inward'){
+          row.from = form.querySelector('#f_party').value;
+          const result = await api('bulk_upsert_inward', {rows:[row], replaceDuplicates});
+          if (attachment && result && (result.created || result.updated)){
+            const target = list.find(x=>String(x.refNo)===String(refNoVal));
+            // attachment on brand-new/replaced row: attach via update since bulk_upsert doesn't take file data directly
+            const fresh = (await api('list_inward')).inward;
+            const rec = fresh.find(x=>String(x.refNo)===String(refNoVal));
+            if (rec) await api('update_inward', {id:rec.id, attachment});
+          }
+        } else {
+          row.to = form.querySelector('#f_party').value;
+          const lk = form.querySelector('#f_link').value; if (lk) row.linkedInwardNumber = (inwardList.find(i=>i.id===lk)||{}).refNo;
+          const result = await api('bulk_upsert_outward', {rows:[row], replaceDuplicates});
+          if (attachment){
+            const fresh = (await api('list_outward')).outward;
+            const rec = fresh.find(x=>String(x.refNo)===String(refNoVal));
+            if (rec) await api('update_outward', {id:rec.id, attachment});
+          }
+        }
         APP.screen=kind; render();
       }catch(e){ errBox.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; btn.disabled=false; btn.textContent='Save entry'; }
     };
@@ -334,10 +388,14 @@ async function screenRegister(kind){
   }
 
   if (canCreate){
-    w.appendChild(screenBulkImport(kind, numberLabel));
+    w.appendChild(screenBulkImport(kind, numberLabel, list, inwardList));
   }
 
+  const selectedIds = new Set();
+
   const listCard = el(`<div class="card"><h2>${kind==='inward'?'Inward':'Outward'} register</h2>
+    ${listLoadError ? `<div class="banner err">${esc(listLoadError)}</div>` : ''}
+    ${applyPendingFilter ? `<div class="banner info">Showing pending entries only. <a href="#" id="clearPendingFilter">Show all</a></div>` : ''}
     <label>Search (${numberLabel}, subject, ${kind==='inward'?'from':'to'}, remarks)</label>
     <input id="regSearch" placeholder="Type to filter...">
     <div class="pill-row">
@@ -345,10 +403,15 @@ async function screenRegister(kind){
       <button class="pill btn-sm" id="expPdf">⬇ PDF</button>
       ${kind==='inward' ? `<button class="pill btn-sm" id="expCombined">⬇ Excel — Inward + linked Outward (same row)</button>` : ''}
     </div>
+    ${canDelete ? `<div id="bulkDeleteBar" style="display:none;margin:8px 0;"><button class="btn-d btn-sm" id="bulkDeleteBtn">Delete selected (0)</button></div>` : ''}
     <div id="regRows"></div>
   </div>`);
+
+  let pendingActive = applyPendingFilter;
+  const clearLink = listCard.querySelector('#clearPendingFilter');
+  if (clearLink) clearLink.onclick = (e)=>{ e.preventDefault(); pendingActive=false; clearLink.parentElement.remove(); renderRows(); };
+
   try{
-    const list = kind==='inward' ? (await api('list_inward')).inward : (await api('list_outward')).outward;
     let outwardListForCombine = [];
     listCard.querySelector('#expExcel').onclick = ()=> exportToExcel(kind, currentFiltered());
     listCard.querySelector('#expPdf').onclick = ()=> exportToPdf(kind, currentFiltered());
@@ -364,26 +427,58 @@ async function screenRegister(kind){
       return hay.includes(term.toLowerCase());
     }
     let currentTerm = '';
-    function currentFiltered(){ return list.filter(r=>matches(r, currentTerm)); }
+    function currentFiltered(){
+      let base = list;
+      if (pendingActive) base = base.filter(r=>r.status!=='Disposed');
+      return base.filter(r=>matches(r, currentTerm));
+    }
+    function updateBulkBar(){
+      const bar = listCard.querySelector('#bulkDeleteBar'); if (!bar) return;
+      const btn = listCard.querySelector('#bulkDeleteBtn');
+      if (selectedIds.size>0){ bar.style.display='block'; btn.textContent = `Delete selected (${selectedIds.size})`; }
+      else { bar.style.display='none'; }
+    }
+    const bulkDeleteBtn = listCard.querySelector('#bulkDeleteBtn');
+    if (bulkDeleteBtn) bulkDeleteBtn.onclick = async ()=>{
+      const ids = Array.from(selectedIds);
+      if (!ids.length) return;
+      if (!confirm(`Delete ${ids.length} selected ${kind} entr${ids.length===1?'y':'ies'}? This cannot be undone.`)) return;
+      try{ await api(kind==='inward'?'bulk_delete_inward':'bulk_delete_outward', {ids}); APP.screen=kind; render(); }
+      catch(e){ alert(e.message); }
+    };
     function renderRows(){
       const rowsBox = listCard.querySelector('#regRows'); rowsBox.innerHTML='';
       const filtered = currentFiltered();
       if (!filtered.length){ rowsBox.appendChild(el(`<div class="empty">No matching entries.</div>`)); return; }
       const canEdit = isAdmin || perms[kind+'_edit'];
-      const canDelete = isAdmin;
+      const canAddOutward = kind==='inward' && (isAdmin || perms.outward_create);
       filtered.slice(0,80).forEach(r=>{
         const statusTag = kind==='inward' ? `<span class="tag ${r.status==='Disposed'?'g':r.status==='Outward Issued'?'g':r.status==='Assigned'?'o':'r'}">${esc(r.status)}</span>` : '';
         const row = el(`<div class="row" style="flex-direction:column;align-items:stretch;">
-          <div><b>${esc(r.subject||'(no subject)')}</b> ${statusTag}
-          <div class="meta">${esc(numberLabel)}: ${esc(r.refNo||'')} · ${r.date||''} · ${esc(r.from||r.to||'')}${r.attachment?` · <a href="${r.attachment.url}" target="_blank">📎 View file</a>`:''}</div></div>
-          ${(canEdit||canDelete) ? `<div style="display:flex;gap:6px;margin-top:6px;">
+          <div style="display:flex;gap:8px;align-items:flex-start;">
+            ${canDelete ? `<input type="checkbox" class="rowCheck" style="margin-top:4px;">` : ''}
+            <div style="flex:1;"><b>${esc(r.subject||'(no subject)')}</b> ${statusTag}
+            <div class="meta">${esc(numberLabel)}: ${esc(r.refNo||'')} · ${r.date||''} · ${esc(r.from||r.to||'')}${r.attachment?` · <a href="${r.attachment.url}" target="_blank">📎 View file</a>`:''}</div></div>
+          </div>
+          ${(canEdit||canDelete||canAddOutward) ? `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
             ${canEdit?`<button class="btn-o btn-sm" data-act="edit">Edit</button>`:''}
+            ${canAddOutward?`<button class="btn-brass btn-sm" data-act="addOutward">+ Outward for this</button>`:''}
             ${canDelete?`<button class="btn-d btn-sm" data-act="del">Delete</button>`:''}
           </div>`:''}
           <div class="editBox hidden" style="margin-top:8px;"></div>
         </div>`);
+        const checkbox = row.querySelector('.rowCheck');
+        if (checkbox) checkbox.onchange = ()=>{
+          if (checkbox.checked) selectedIds.add(r.id); else selectedIds.delete(r.id);
+          updateBulkBar();
+        };
         const editBtn = row.querySelector('[data-act=edit]');
         const delBtn = row.querySelector('[data-act=del]');
+        const addOutwardBtn = row.querySelector('[data-act=addOutward]');
+        if (addOutwardBtn) addOutwardBtn.onclick = ()=>{
+          APP.prefillOutwardFor = { id:r.id, refNo:r.refNo, subject:r.subject };
+          APP.screen='outward'; render();
+        };
         if (editBtn) editBtn.onclick = ()=>{
           const box = row.querySelector('.editBox');
           box.classList.toggle('hidden');
@@ -476,7 +571,7 @@ async function screenRegister(kind){
 }
 
 /* ============ BULK EXCEL IMPORT (Inward / Outward) ============ */
-function screenBulkImport(kind, numberLabel){
+function screenBulkImport(kind, numberLabel, existingList, inwardListForLink){
   const isInward = kind==='inward';
   const card = el(`<div class="card"><h2>Bulk ${isInward?'Inward':'Outward'} entry (Excel)</h2>
     <p class="meta">Download the template, fill multiple rows offline, then upload it back — all rows get created in one go.</p>
@@ -490,12 +585,16 @@ function screenBulkImport(kind, numberLabel){
 
   card.querySelector('#bulkTemplateBtn').onclick = ()=>{
     const headers = isInward
-      ? ['Date (YYYY-MM-DD)', numberLabel, 'From', 'Subject', 'Remarks']
-      : ['Date (YYYY-MM-DD)', numberLabel, 'To', 'Subject', 'Remarks', 'Linked Inward Number (optional)'];
+      ? ['Date (YYYY-MM-DD)', numberLabel, 'Letter No.', 'From', 'Subject', 'Remarks']
+      : ['Date (YYYY-MM-DD)', numberLabel, 'Letter No.', 'To', 'Subject', 'Remarks', 'Linked Inward Number (optional)'];
     const sample = isInward
-      ? ['2026-08-20', '101', 'EE ID1 Siddipet', 'Sample subject line', 'Sample remarks']
-      : ['2026-08-20', '55', 'CE Office', 'Sample subject line', 'Sample remarks', '101'];
+      ? ['2026-08-20', '101', 'LR-45', 'EE ID1 Siddipet', 'Sample subject line', 'Sample remarks']
+      : ['2026-08-20', '55', 'LR-12', 'CE Office', 'Sample subject line', 'Sample remarks', '101'];
     const ws = XLSX.utils.aoa_to_sheet([headers, sample]);
+    // Force the Date column (col A) to be stored as text, so Excel/Sheets never
+    // silently reformats it into a locale date format when the file is opened.
+    ['A1','A2'].forEach(addr=>{ if (ws[addr]) ws[addr].t = 's'; });
+    ws['!cols'] = [{wch:16},{wch:14},{wch:12},{wch:20},{wch:34},{wch:24},{wch:22}];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, isInward?'Inward':'Outward');
     XLSX.writeFile(wb, `${kind}-bulk-template.xlsx`);
@@ -508,32 +607,51 @@ function screenBulkImport(kind, numberLabel){
     const reader = new FileReader();
     reader.onload = async (ev)=>{
       try{
-        const wb = XLSX.read(ev.target.result, {type:'array'});
+        const wb = XLSX.read(ev.target.result, {type:'array', cellDates:true});
         const ws = wb.Sheets[wb.SheetNames[0]];
         const rows = XLSX.utils.sheet_to_json(ws, {defval:''});
         if (!rows.length){ statusEl.innerHTML = `<div class="banner err">No data rows found in the sheet.</div>`; return; }
+        function formatDate(v){
+          if (v instanceof Date) return v.toISOString().slice(0,10);
+          return String(v).trim();
+        }
         const mapped = rows.map(r=>{
           const get = (keyPart)=>{
             const key = Object.keys(r).find(k=>k.toLowerCase().includes(keyPart));
-            return key ? String(r[key]).trim() : '';
+            return key ? r[key] : '';
           };
+          const letterNo = String(get('letter')||'').trim();
+          const rawSubject = String(get('subject')||'').trim();
+          const subject = letterNo ? `${letterNo} - ${rawSubject}` : rawSubject;
           const base = {
-            date: get('date'), refNo: get(numberLabel.toLowerCase().slice(0,6)) || get('number'),
-            subject: get('subject'), remarks: get('remarks')
+            date: formatDate(get('date')), refNo: String(get(numberLabel.toLowerCase().slice(0,6)) || get('number')||'').trim(),
+            subject, remarks: String(get('remarks')||'').trim()
           };
-          if (isInward) base.from = get('from');
-          else { base.to = get('to'); base.linkedInwardNumber = get('linked'); }
+          if (isInward) base.from = String(get('from')||'').trim();
+          else { base.to = String(get('to')||'').trim(); base.linkedInwardNumber = String(get('linked')||'').trim(); }
           return base;
         });
+
+        // Duplicate detection against existing entries, keyed by Inward/Outward Number
+        const existingRefNos = new Set(existingList.map(x=>String(x.refNo)));
+        const duplicateRefNos = [...new Set(mapped.filter(r=>existingRefNos.has(String(r.refNo))).map(r=>r.refNo))];
+        let replaceDuplicates = false;
+        if (duplicateRefNos.length){
+          replaceDuplicates = confirm(
+            `The following ${numberLabel}(s) already exist and will be REPLACED if you continue:\n\n${duplicateRefNos.join(', ')}\n\n` +
+            `Click OK to replace the existing data for these entries.\nClick Cancel to skip them and only add the new (non-duplicate) rows.`
+          );
+        }
+
         statusEl.innerHTML = `<div class="banner info">Uploading ${mapped.length} row(s)…</div>`;
-        const result = await api(isInward?'bulk_create_inward':'bulk_create_outward', {rows: mapped});
-        let msg = `<div class="banner info">✓ ${result.created} ${kind} entr${result.created===1?'y':'ies'} created.</div>`;
+        const result = await api(isInward?'bulk_upsert_inward':'bulk_upsert_outward', {rows: mapped, replaceDuplicates});
+        let msg = `<div class="banner info">✓ ${result.created} created${result.updated?`, ${result.updated} replaced`:''}.</div>`;
         if (result.skipped && result.skipped.length){
           msg += `<div class="banner err">${result.skipped.length} row(s) had issues:<br>${result.skipped.map(s=>esc(s)).join('<br>')}</div>`;
         }
         statusEl.innerHTML = msg;
         card.querySelector('#bulkFile').value = '';
-        setTimeout(()=>{ APP.screen=kind; render(); }, 1500);
+        setTimeout(()=>{ APP.screen=kind; render(); }, 1800);
       }catch(err){
         statusEl.innerHTML = `<div class="banner err">${esc(err.message)}</div>`;
       }
