@@ -1,15 +1,16 @@
 <!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
-<title>I&CADD Records Management System</title>
+<title>ISD1 Record Management</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#14456b">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="ICADD Records">
+<meta name="apple-mobile-web-app-title" content="ISD1 Records">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
 :root{--blue:#14456b;--blue2:#1c5a8a;--bg:#f4f6f8;--panel:#fff;--line:#dbe2e8;--ink:#1c2b36;--muted:#5c6b78;--ok:#1f7a4d;--warn:#b3541c;--danger:#a63a3a;}
 *{box-sizing:border-box;} body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding-bottom:70px;}
@@ -28,8 +29,9 @@ button{font-family:inherit;font-weight:600;font-size:.85rem;border-radius:6px;bo
 .tag{font-size:.62rem;text-transform:uppercase;font-weight:700;padding:2px 7px;border-radius:100px;}
 .tag.g{background:#e5f1ea;color:var(--ok);} .tag.o{background:#fbeee2;color:var(--warn);} .tag.r{background:#f7e3e3;color:var(--danger);}
 nav{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--line);display:flex;z-index:20;overflow-x:auto;}
-nav button{flex:1;min-width:64px;background:none;border:none;border-radius:0;padding:8px 2px;color:var(--muted);font-size:.62rem;}
-nav button.active{color:var(--blue);font-weight:700;border-top:2px solid var(--blue);}
+nav button{flex:1;min-width:78px;background:none;border:none;border-radius:0;padding:12px 4px;color:var(--muted);font-size:.78rem;font-weight:600;}
+nav button.active{color:var(--blue);font-weight:700;border-top:3px solid var(--blue);}
+body{padding-bottom:88px;}
 .pill-row{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0;} .pill{font-size:.72rem;padding:5px 10px;border-radius:100px;border:1px solid var(--line);background:#fff;cursor:pointer;}
 .pill.active{background:var(--blue);color:#fff;border-color:var(--blue);}
 .empty{text-align:center;padding:22px;color:var(--muted);font-size:.84rem;border:1px dashed var(--line);border-radius:8px;}
@@ -40,11 +42,12 @@ nav button.active{color:var(--blue);font-weight:700;border-top:2px solid var(--b
 table{width:100%;border-collapse:collapse;font-size:.8rem;} td,th{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left;}
 .switchrow{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #eee;font-size:.82rem;}
 .hidden{display:none!important;}
+@keyframes spin{to{transform:rotate(360deg);}}
 .center{min-height:80vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px;}
 video,canvas{width:100%;border-radius:6px;background:#000;}
 </style></head>
 <body>
-<header><div><div class="t">I&CADD Records Management</div><small id="hdrSub">Not signed in</small></div>
+<header><div><div class="t">ISD1 Record Management</div><small id="hdrSub">Not signed in</small></div>
 <button class="btn-o" id="signoutBtn" style="display:none;">Sign out</button></header>
 <main id="main"></main>
 <nav id="nav" class="hidden"></nav>
@@ -52,7 +55,7 @@ video,canvas{width:100%;border-radius:6px;background:#000;}
 <script>
 /* ============ CONFIG ============ */
 const LS = { get:(k,d)=>{try{const v=localStorage.getItem(k);return v===null?d:JSON.parse(v);}catch(e){return d;}}, set:(k,v)=>localStorage.setItem(k,JSON.stringify(v)) };
-const APP = { apiUrl: LS.get('rms_api_url',''), token: LS.get('rms_token',''), user: LS.get('rms_user',null), screen:'dashboard', cache:{} };
+const APP = { apiUrl: LS.get('rms_api_url',''), token: LS.get('rms_token',''), user: LS.get('rms_user',null), screen:'dashboard', cache:{}, _renderToken:0 };
 
 async function api(action, payload={}){
   if (!APP.apiUrl) throw new Error('API URL not configured');
@@ -62,6 +65,23 @@ async function api(action, payload={}){
   return data;
 }
 function el(html){const t=document.createElement('template');t.innerHTML=html.trim();return t.content.firstChild;}
+function attachPasswordToggle(inputEl){
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:relative;';
+  inputEl.parentNode.insertBefore(wrap, inputEl);
+  wrap.appendChild(inputEl);
+  inputEl.style.paddingRight = '46px';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = 'Show';
+  btn.style.cssText = 'position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:none;color:#14456b;font-size:.72rem;font-weight:700;padding:6px 8px;cursor:pointer;';
+  btn.onclick = ()=>{
+    const showing = inputEl.type==='text';
+    inputEl.type = showing ? 'password' : 'text';
+    btn.textContent = showing ? 'Show' : 'Hide';
+  };
+  wrap.appendChild(btn);
+}
 function esc(s){return (s||'').toString().replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 
 /* ============ RENDER ROOT ============ */
@@ -79,13 +99,25 @@ function render(){
   signoutBtn.onclick = doSignOut;
   nav.classList.remove('hidden');
   renderNav();
-  main.innerHTML='';
+  const renderToken = ++APP._renderToken;
+  main.innerHTML = '';
+  main.appendChild(loadingSpinner());
   const screens = {
     dashboard: screenDashboard, inward: ()=>screenRegister('inward'), outward: ()=>screenRegister('outward'),
     mywork: screenMyWork, attendance: screenAttendance, users: screenUsers, storage: screenStorage, audit: screenAudit,
     abstract: screenAbstract
   };
-  (screens[APP.screen]||screenDashboard)().then(node=>main.appendChild(node));
+  (screens[APP.screen]||screenDashboard)().then(node=>{
+    if (renderToken !== APP._renderToken) return; // a newer screen was requested meanwhile, discard this one
+    main.innerHTML='';
+    main.appendChild(node);
+  });
+}
+function loadingSpinner(){
+  return el(`<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:var(--muted);">
+    <div style="width:34px;height:34px;border:3px solid var(--line);border-top-color:var(--blue);border-radius:50%;animation:spin .8s linear infinite;"></div>
+    <div style="margin-top:12px;font-size:.85rem;">Loading…</div>
+  </div>`);
 }
 function roleLabel(r){return r==='admin'?'Administrator':r==='field_officer'?'Field Officer':r==='work_inspector'?'Work Inspector':r;}
 
@@ -127,7 +159,7 @@ function screenApiSetup(){
 
 function screenLogin(){
   const w = el(`<div class="center">
-    <h1 style="font-size:1.3rem;">I&CADD Records Management</h1>
+    <h1 style="font-size:1.3rem;">ISD1 Record Management</h1>
     <p class="meta" style="max-width:300px;margin:6px 0 16px;">Sign in with your office username and password.</p>
     <div class="card" style="width:100%;max-width:320px;text-align:left;">
       <div id="loginErr"></div>
@@ -149,6 +181,7 @@ function screenLogin(){
     }catch(e){ errBox.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
   };
   w.querySelector('#firstAdminBtn').onclick = ()=>{ APP.screen='bootstrap'; renderBootstrap(); };
+  attachPasswordToggle(w.querySelector('#loginPass'));
   return w;
 }
 
@@ -175,6 +208,7 @@ function renderBootstrap(){
       setTimeout(()=>{APP.screen='dashboard'; render();}, 1200);
     }catch(e){ errBox.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
   };
+  attachPasswordToggle(w.querySelector('#bPass'));
   main.appendChild(w);
 }
 function doSignOut(){ api('logout').catch(()=>{}); APP.token=null; APP.user=null; LS.set('rms_token',''); LS.set('rms_user',null); render(); }
@@ -228,21 +262,34 @@ async function screenRegister(kind){
       <select id="f_folder">${folderOptions.map(fo=>`<option value="${fo.id}">${esc(fo.path)}</option>`).join('')}</select>
       <label>Attach document (camera or file)</label>
       <input type="file" id="f_file" accept="image/*,application/pdf" capture="environment">
+      <button class="btn-o btn-block" type="button" id="f_scanBtn" style="margin-top:8px;">📷 Scan multiple pages → one PDF</button>
       <div id="f_preview"></div>
       <button class="btn-p btn-block" id="f_save">Save entry</button>
       <div id="f_err"></div>
     </div>`);
-    let rotation = 0, fileDataUrl=null, fileMime=null, fileName=null;
+    let rotation = 0, fileDataUrl=null, fileMime=null, fileName=null, scannedPageCount=0;
     form.querySelector('#f_file').onchange = (e)=>{
       const file = e.target.files[0]; if (!file) return;
-      fileName=file.name; fileMime=file.type;
+      fileName=file.name; fileMime=file.type; scannedPageCount=0;
       const reader = new FileReader();
       reader.onload = ()=>{ fileDataUrl = reader.result; rotation=0; renderPreview(); };
       reader.readAsDataURL(file);
     };
+    form.querySelector('#f_scanBtn').onclick = ()=>{
+      openMultiPageScanner((result)=>{
+        fileDataUrl = result.dataUrl; fileMime = result.mime; fileName = result.fileName;
+        rotation = 0; scannedPageCount = result.pageCount;
+        renderPreview();
+      });
+    };
     function renderPreview(){
       const pv = form.querySelector('#f_preview'); pv.innerHTML='';
-      if (!fileDataUrl || !fileMime.startsWith('image/')) return;
+      if (!fileDataUrl) return;
+      if (fileMime==='application/pdf'){
+        pv.appendChild(el(`<div class="banner info" style="margin-top:8px;">📄 ${esc(fileName)}${scannedPageCount?` — ${scannedPageCount} page${scannedPageCount>1?'s':''} scanned`:''}, ready to attach.</div>`));
+        return;
+      }
+      if (!fileMime.startsWith('image/')) return;
       const canvas = document.createElement('canvas'); canvas.style.marginTop='8px';
       const img = new Image();
       img.onload = ()=>{
@@ -284,6 +331,10 @@ async function screenRegister(kind){
       }catch(e){ errBox.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; btn.disabled=false; btn.textContent='Save entry'; }
     };
     w.appendChild(form);
+  }
+
+  if (canCreate){
+    w.appendChild(screenBulkImport(kind, numberLabel));
   }
 
   const listCard = el(`<div class="card"><h2>${kind==='inward'?'Inward':'Outward'} register</h2>
@@ -342,6 +393,34 @@ async function screenRegister(kind){
           box.appendChild(el(`<div><label>${numberLabel}</label><input id="e_ref" value="${esc(r.refNo||'')}"></div>`));
           box.appendChild(el(`<div><label>Subject</label><textarea id="e_subject">${esc(r.subject||'')}</textarea></div>`));
           box.appendChild(el(`<div><label>Remarks</label><textarea id="e_remarks">${esc(r.remarks||'')}</textarea></div>`));
+          const attBox = el(`<div><label>Attachment</label>
+            <div id="e_attCurrent" style="font-size:.82rem;margin-bottom:6px;">${r.attachment ? `Current: <a href="${r.attachment.url}" target="_blank">${esc(r.attachment.name)}</a>` : 'No attachment'}</div>
+            <input type="file" id="e_file" accept="image/*,application/pdf" capture="environment">
+            <div id="e_fileStatus" style="font-size:.78rem;color:var(--muted);margin-top:4px;"></div>
+            ${r.attachment ? `<button class="btn-o btn-sm" id="e_removeAtt" type="button" style="margin-top:6px;">Remove current attachment</button>` : ''}
+          </div>`);
+          box.appendChild(attBox);
+          let newAttachmentPayload = undefined; // undefined = no change; null = remove; {id,name,url} = replaced
+          const removeBtn = attBox.querySelector('#e_removeAtt');
+          if (removeBtn) removeBtn.onclick = ()=>{
+            newAttachmentPayload = null;
+            attBox.querySelector('#e_attCurrent').innerHTML = 'Attachment will be removed on save.';
+            removeBtn.remove();
+          };
+          attBox.querySelector('#e_file').onchange = (e)=>{
+            const file = e.target.files[0]; if (!file) return;
+            const statusEl = attBox.querySelector('#e_fileStatus');
+            statusEl.textContent = 'Uploading…';
+            const reader = new FileReader();
+            reader.onload = async ()=>{
+              try{
+                const up = await api('upload_file', {fileName:file.name, mimeType:file.type, base64Data:reader.result.split(',')[1]});
+                newAttachmentPayload = {id:up.id, name:up.name, url:up.url};
+                statusEl.textContent = `New file ready: ${up.name} (will replace current on save)`;
+              }catch(err){ statusEl.textContent = 'Upload failed: '+err.message; }
+            };
+            reader.readAsDataURL(file);
+          };
           const saveBtn = el(`<button class="btn-p btn-block btn-sm">Save changes</button>`);
           const errBox = el(`<div></div>`);
           box.appendChild(saveBtn); box.appendChild(errBox);
@@ -350,6 +429,7 @@ async function screenRegister(kind){
             try{
               const payload = { id:r.id, date: box.querySelector('#e_date').value, refNo: box.querySelector('#e_ref').value,
                 subject: box.querySelector('#e_subject').value, remarks: box.querySelector('#e_remarks').value };
+              if (newAttachmentPayload !== undefined) payload.attachment = newAttachmentPayload;
               if (kind==='inward'){ payload.from = box.querySelector('#e_party').value; await api('update_inward', payload); }
               else { payload.to = box.querySelector('#e_party').value; await api('update_outward', payload); }
               APP.screen=kind; render();
@@ -393,6 +473,307 @@ async function screenRegister(kind){
     w.appendChild(distCard);
   }
   return w;
+}
+
+/* ============ BULK EXCEL IMPORT (Inward / Outward) ============ */
+function screenBulkImport(kind, numberLabel){
+  const isInward = kind==='inward';
+  const card = el(`<div class="card"><h2>Bulk ${isInward?'Inward':'Outward'} entry (Excel)</h2>
+    <p class="meta">Download the template, fill multiple rows offline, then upload it back — all rows get created in one go.</p>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+      <button class="btn-o btn-sm" id="bulkTemplateBtn" type="button">⬇ Download Excel template</button>
+    </div>
+    <label style="margin-top:10px;">Upload filled template</label>
+    <input type="file" id="bulkFile" accept=".xlsx,.xls">
+    <div id="bulkStatus" style="margin-top:8px;"></div>
+  </div>`);
+
+  card.querySelector('#bulkTemplateBtn').onclick = ()=>{
+    const headers = isInward
+      ? ['Date (YYYY-MM-DD)', numberLabel, 'From', 'Subject', 'Remarks']
+      : ['Date (YYYY-MM-DD)', numberLabel, 'To', 'Subject', 'Remarks', 'Linked Inward Number (optional)'];
+    const sample = isInward
+      ? ['2026-08-20', '101', 'EE ID1 Siddipet', 'Sample subject line', 'Sample remarks']
+      : ['2026-08-20', '55', 'CE Office', 'Sample subject line', 'Sample remarks', '101'];
+    const ws = XLSX.utils.aoa_to_sheet([headers, sample]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, isInward?'Inward':'Outward');
+    XLSX.writeFile(wb, `${kind}-bulk-template.xlsx`);
+  };
+
+  card.querySelector('#bulkFile').onchange = (e)=>{
+    const file = e.target.files[0]; if (!file) return;
+    const statusEl = card.querySelector('#bulkStatus');
+    statusEl.innerHTML = `<div class="banner info">Reading file…</div>`;
+    const reader = new FileReader();
+    reader.onload = async (ev)=>{
+      try{
+        const wb = XLSX.read(ev.target.result, {type:'array'});
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(ws, {defval:''});
+        if (!rows.length){ statusEl.innerHTML = `<div class="banner err">No data rows found in the sheet.</div>`; return; }
+        const mapped = rows.map(r=>{
+          const get = (keyPart)=>{
+            const key = Object.keys(r).find(k=>k.toLowerCase().includes(keyPart));
+            return key ? String(r[key]).trim() : '';
+          };
+          const base = {
+            date: get('date'), refNo: get(numberLabel.toLowerCase().slice(0,6)) || get('number'),
+            subject: get('subject'), remarks: get('remarks')
+          };
+          if (isInward) base.from = get('from');
+          else { base.to = get('to'); base.linkedInwardNumber = get('linked'); }
+          return base;
+        });
+        statusEl.innerHTML = `<div class="banner info">Uploading ${mapped.length} row(s)…</div>`;
+        const result = await api(isInward?'bulk_create_inward':'bulk_create_outward', {rows: mapped});
+        let msg = `<div class="banner info">✓ ${result.created} ${kind} entr${result.created===1?'y':'ies'} created.</div>`;
+        if (result.skipped && result.skipped.length){
+          msg += `<div class="banner err">${result.skipped.length} row(s) had issues:<br>${result.skipped.map(s=>esc(s)).join('<br>')}</div>`;
+        }
+        statusEl.innerHTML = msg;
+        card.querySelector('#bulkFile').value = '';
+        setTimeout(()=>{ APP.screen=kind; render(); }, 1500);
+      }catch(err){
+        statusEl.innerHTML = `<div class="banner err">${esc(err.message)}</div>`;
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+  return card;
+}
+
+/* ============ MULTI-PAGE CAMERA SCANNER → SINGLE PDF ============ */
+function openMultiPageScanner(onComplete){
+  const pages = []; // array of {dataUrl, w, h} - final, edited
+  let stream = null;
+
+  const overlay = el(`<div style="position:fixed;inset:0;background:#000;z-index:100;display:flex;flex-direction:column;">
+    <video id="scanVideo" autoplay playsinline style="flex:1;width:100%;object-fit:cover;background:#111;"></video>
+    <div style="background:#111;padding:10px;text-align:center;color:#fff;font-size:.85rem;" id="scanCount">0 pages captured</div>
+    <div style="background:#111;padding:10px;display:flex;gap:8px;">
+      <button class="btn-o btn-block" id="scanCancel" type="button">✕ Cancel</button>
+      <button class="btn-p btn-block" id="scanCapture" type="button" style="flex:2;">📸 Capture page</button>
+      <button class="btn-brass btn-block" id="scanDone" type="button" disabled>✅ Done</button>
+    </div>
+  </div>`);
+  document.body.appendChild(overlay);
+  const video = overlay.querySelector('#scanVideo');
+  const countLabel = overlay.querySelector('#scanCount');
+  const doneBtn = overlay.querySelector('#scanDone');
+
+  function cleanup(){
+    if (stream) stream.getTracks().forEach(t=>t.stop());
+    if (overlay.parentNode) document.body.removeChild(overlay);
+  }
+
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+    .then(s=>{ stream = s; video.srcObject = s; })
+    .catch(err=>{ alert('Could not access camera: '+err.message); cleanup(); });
+
+  overlay.querySelector('#scanCancel').onclick = cleanup;
+
+  overlay.querySelector('#scanCapture').onclick = ()=>{
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    overlay.style.background = '#fff';
+    setTimeout(()=>{ overlay.style.background = '#000'; }, 90);
+    openPageEditor(canvas, (finalCanvas)=>{
+      pages.push({ dataUrl: finalCanvas.toDataURL('image/jpeg', 0.9), w: finalCanvas.width, h: finalCanvas.height });
+      countLabel.textContent = `${pages.length} page${pages.length>1?'s':''} captured`;
+      doneBtn.disabled = pages.length===0;
+    });
+  };
+
+  doneBtn.onclick = ()=>{
+    if (!pages.length) return;
+    doneBtn.disabled = true; doneBtn.textContent = 'Building PDF…';
+    try{
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit:'mm', format:'a4' });
+      pages.forEach((page, i)=>{
+        if (i>0) doc.addPage();
+        const pageW = doc.internal.pageSize.getWidth();
+        const pageH = doc.internal.pageSize.getHeight();
+        const margin = 5;
+        const maxW = pageW - margin*2, maxH = pageH - margin*2;
+        const scale = Math.min(maxW/page.w, maxH/page.h);
+        const w = page.w*scale, h = page.h*scale;
+        const x = (pageW-w)/2, y = (pageH-h)/2;
+        doc.addImage(page.dataUrl, 'JPEG', x, y, w, h, undefined, 'FAST');
+      });
+      const blob = doc.output('blob');
+      const reader = new FileReader();
+      reader.onload = ()=>{
+        cleanup();
+        onComplete({ dataUrl: reader.result, mime:'application/pdf', fileName:`scan-${Date.now()}.pdf`, pageCount: pages.length });
+      };
+      reader.readAsDataURL(blob);
+    }catch(e){
+      alert('Could not build PDF: '+e.message);
+      cleanup();
+    }
+  };
+}
+
+/* Per-page editor: crop (drag rectangle), rotate 90°, color mode. Calls onDone(finalCanvas) or discards on Retake. */
+function openPageEditor(sourceCanvas, onDone){
+  let rotation = 0;       // 0/90/180/270, applied to sourceCanvas
+  let colorMode = 'original'; // original | grayscale | bw | enhance
+  let cropRect = null;    // {x,y,w,h} in rotated-canvas pixel space; null = full image
+
+  const ed = el(`<div style="position:fixed;inset:0;background:#000;z-index:110;display:flex;flex-direction:column;">
+    <div style="flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;">
+      <div id="edStage" style="position:relative;max-width:100%;max-height:100%;">
+        <img id="edImg" style="display:block;max-width:100%;max-height:70vh;touch-action:none;">
+        <div id="edSelBox" style="position:absolute;border:2px solid #ffcc00;background:rgba(255,204,0,0.15);display:none;"></div>
+      </div>
+    </div>
+    <div style="background:#111;padding:8px 10px;">
+      <div class="pill-row" style="justify-content:center;">
+        <button class="pill" data-mode="original" style="color:#fff;">Original</button>
+        <button class="pill" data-mode="grayscale" style="color:#fff;">Grayscale</button>
+        <button class="pill" data-mode="bw" style="color:#fff;">B&amp;W Document</button>
+        <button class="pill" data-mode="enhance" style="color:#fff;">Enhance</button>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button class="btn-o btn-block" id="edRotate" type="button">↻ Rotate 90°</button>
+        <button class="btn-o btn-block" id="edResetCrop" type="button">Reset crop</button>
+      </div>
+      <p style="color:#aaa;font-size:.72rem;text-align:center;margin:8px 0 4px;">Drag on the image to select a crop area (optional)</p>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-d btn-block" id="edRetake" type="button">Retake</button>
+        <button class="btn-p btn-block" id="edAdd" type="button" style="flex:2;">✓ Add page</button>
+      </div>
+    </div>
+  </div>`);
+  document.body.appendChild(ed);
+
+  const imgEl = ed.querySelector('#edImg');
+  const selBox = ed.querySelector('#edSelBox');
+  const stage = ed.querySelector('#edStage');
+
+  let rotatedCanvas = sourceCanvas;
+  function refreshRotated(){
+    if (rotation===0){ rotatedCanvas = sourceCanvas; return; }
+    const swap = rotation%180!==0;
+    const c = document.createElement('canvas');
+    c.width = swap? sourceCanvas.height: sourceCanvas.width;
+    c.height = swap? sourceCanvas.width: sourceCanvas.height;
+    const ctx = c.getContext('2d');
+    ctx.translate(c.width/2, c.height/2);
+    ctx.rotate(rotation*Math.PI/180);
+    ctx.drawImage(sourceCanvas, -sourceCanvas.width/2, -sourceCanvas.height/2);
+    rotatedCanvas = c;
+  }
+  function renderPreviewImg(){
+    refreshRotated();
+    cropRect = null; selBox.style.display='none';
+    imgEl.src = rotatedCanvas.toDataURL('image/jpeg', 0.85);
+  }
+  renderPreviewImg();
+
+  ed.querySelector('#edRotate').onclick = ()=>{ rotation = (rotation+90)%360; renderPreviewImg(); };
+  ed.querySelector('#edResetCrop').onclick = ()=>{ cropRect=null; selBox.style.display='none'; };
+
+  ed.querySelectorAll('.pill[data-mode]').forEach(btn=>{
+    btn.onclick = ()=>{
+      ed.querySelectorAll('.pill[data-mode]').forEach(b=>b.classList.remove('active'));
+      btn.classList.add('active');
+      colorMode = btn.dataset.mode;
+    };
+  });
+  ed.querySelector('[data-mode="original"]').classList.add('active');
+
+  // Drag-to-select crop rectangle (pointer events, works for touch + mouse)
+  let dragStart = null;
+  function pointFromEvent(e){
+    const rect = imgEl.getBoundingClientRect();
+    const cx = (e.touches? e.touches[0].clientX : e.clientX) - rect.left;
+    const cy = (e.touches? e.touches[0].clientY : e.clientY) - rect.top;
+    return { x: Math.max(0,Math.min(cx,rect.width)), y: Math.max(0,Math.min(cy,rect.height)), rect };
+  }
+  function startDrag(e){
+    e.preventDefault();
+    const p = pointFromEvent(e);
+    dragStart = p;
+    selBox.style.display = 'block';
+    selBox.style.left = p.x+'px'; selBox.style.top = p.y+'px'; selBox.style.width='0px'; selBox.style.height='0px';
+  }
+  function moveDrag(e){
+    if (!dragStart) return;
+    e.preventDefault();
+    const p = pointFromEvent(e);
+    const x = Math.min(dragStart.x, p.x), y = Math.min(dragStart.y, p.y);
+    const w = Math.abs(p.x-dragStart.x), h = Math.abs(p.y-dragStart.y);
+    selBox.style.left=x+'px'; selBox.style.top=y+'px'; selBox.style.width=w+'px'; selBox.style.height=h+'px';
+  }
+  function endDrag(e){
+    if (!dragStart) return;
+    const p = pointFromEvent(e);
+    const rect = p.rect;
+    const scaleX = rotatedCanvas.width / rect.width, scaleY = rotatedCanvas.height / rect.height;
+    const x0 = Math.min(dragStart.x, p.x), y0 = Math.min(dragStart.y, p.y);
+    const w0 = Math.abs(p.x-dragStart.x), h0 = Math.abs(p.y-dragStart.y);
+    dragStart = null;
+    if (w0<10 || h0<10){ selBox.style.display='none'; cropRect=null; return; } // too small = ignore, keep full image
+    cropRect = { x: x0*scaleX, y: y0*scaleY, w: w0*scaleX, h: h0*scaleY };
+  }
+  imgEl.addEventListener('mousedown', startDrag);
+  imgEl.addEventListener('mousemove', moveDrag);
+  window.addEventListener('mouseup', endDrag);
+  imgEl.addEventListener('touchstart', startDrag, {passive:false});
+  imgEl.addEventListener('touchmove', moveDrag, {passive:false});
+  imgEl.addEventListener('touchend', endDrag);
+
+  function applyColorFilter(canvas, mode){
+    if (mode==='original') return canvas;
+    const ctx = canvas.getContext('2d');
+    const imgData = ctx.getImageData(0,0,canvas.width,canvas.height);
+    const d = imgData.data;
+    if (mode==='grayscale'){
+      for (let i=0;i<d.length;i+=4){
+        const lum = 0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+        d[i]=d[i+1]=d[i+2]=lum;
+      }
+    } else if (mode==='bw'){
+      for (let i=0;i<d.length;i+=4){
+        const lum = 0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+        const v = lum > 150 ? 255 : 0;
+        d[i]=d[i+1]=d[i+2]=v;
+      }
+    } else if (mode==='enhance'){
+      const contrast = 1.35, brightness = 18;
+      for (let i=0;i<d.length;i+=4){
+        for (let c=0;c<3;c++){
+          d[i+c] = Math.min(255, Math.max(0, (d[i+c]-128)*contrast + 128 + brightness));
+        }
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+    return canvas;
+  }
+
+  function closeEditor(){ if (ed.parentNode) document.body.removeChild(ed); }
+
+  ed.querySelector('#edRetake').onclick = closeEditor;
+
+  ed.querySelector('#edAdd').onclick = ()=>{
+    let finalCanvas;
+    if (cropRect){
+      finalCanvas = document.createElement('canvas');
+      finalCanvas.width = Math.round(cropRect.w); finalCanvas.height = Math.round(cropRect.h);
+      finalCanvas.getContext('2d').drawImage(rotatedCanvas, cropRect.x, cropRect.y, cropRect.w, cropRect.h, 0, 0, finalCanvas.width, finalCanvas.height);
+    } else {
+      finalCanvas = document.createElement('canvas');
+      finalCanvas.width = rotatedCanvas.width; finalCanvas.height = rotatedCanvas.height;
+      finalCanvas.getContext('2d').drawImage(rotatedCanvas, 0, 0);
+    }
+    applyColorFilter(finalCanvas, colorMode);
+    closeEditor();
+    onDone(finalCanvas);
+  };
 }
 
 /* ============ EXPORT: EXCEL / PDF / COMBINED ============ */
@@ -537,6 +918,7 @@ async function screenUsers(){
       APP.screen='users'; render();
     }catch(e){ form.querySelector('#u_err').innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
   };
+  attachPasswordToggle(form.querySelector('#u_pass'));
   w.appendChild(form);
 
   const listCard = el(`<div class="card"><h2>All users</h2></div>`);
@@ -551,10 +933,24 @@ async function screenUsers(){
           <button class="btn-o btn-sm" data-act="reset">Reset password</button>
           <button class="btn-o btn-sm" data-act="perm">Permissions</button>
         </div>
+        <div class="resetBox hidden" style="margin-top:8px;"></div>
         <div class="permBox hidden"></div>
       </div>`);
       box.querySelector('[data-act=toggle]').onclick = async ()=>{ await api('set_access_status',{id:u.id, status: u.accessStatus==='active'?'inactive':'active'}); APP.screen='users'; render(); };
-      box.querySelector('[data-act=reset]').onclick = async ()=>{ const np = prompt('New password (min 8 chars) for '+u.name); if(np&&np.length>=8) await api('reset_password',{id:u.id,newPassword:np}); };
+      box.querySelector('[data-act=reset]').onclick = ()=>{
+        const rb = box.querySelector('.resetBox'); rb.classList.toggle('hidden'); if (rb.dataset.built) return; rb.dataset.built='1';
+        rb.appendChild(el(`<label>New password for ${esc(u.name)} (min 8 chars)</label><input id="rb_pass_${u.id}" type="password">`));
+        const saveBtn = el(`<button class="btn-p btn-block btn-sm" style="margin-top:6px;">Set new password</button>`);
+        const errBox = el(`<div></div>`);
+        rb.appendChild(saveBtn); rb.appendChild(errBox);
+        attachPasswordToggle(rb.querySelector(`#rb_pass_${u.id}`));
+        saveBtn.onclick = async ()=>{
+          const np = rb.querySelector(`#rb_pass_${u.id}`).value;
+          if (!np || np.length<8){ errBox.innerHTML = `<div class="banner err">Password must be at least 8 characters.</div>`; return; }
+          try{ await api('reset_password',{id:u.id,newPassword:np}); rb.innerHTML=''; rb.appendChild(el(`<div class="banner info">Password updated.</div>`)); }
+          catch(e){ errBox.innerHTML = `<div class="banner err">${esc(e.message)}</div>`; }
+        };
+      };
       box.querySelector('[data-act=perm]').onclick = ()=>{
         const pb = box.querySelector('.permBox'); pb.classList.toggle('hidden'); if (pb.dataset.built) return; pb.dataset.built='1';
         PERM_KEYS.forEach(k=>{

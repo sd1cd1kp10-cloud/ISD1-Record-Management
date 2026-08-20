@@ -1,6 +1,6 @@
 {
-  "name": "I&CADD Records Management",
-  "short_name": "ICADD Records",
+  "name": "ISD1 Record Management",
+  "short_name": "ISD1 Records",
   "description": "Office correspondence, storage, and field records management",
   "start_url": "./index.html",
   "scope": "./",
