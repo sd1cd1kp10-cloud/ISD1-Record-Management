@@ -471,36 +471,52 @@ async function screenRegister(kind){
       if (!filtered.length){ rowsBox.appendChild(el(`<div class="empty">No matching entries.</div>`)); return; }
       const canEdit = isAdmin || perms[kind+'_edit'];
       const canAddOutward = kind==='inward' && (isAdmin || perms.outward_create);
+      const colCount = (canDelete?1:0) + 5 + ((canEdit||canDelete||canAddOutward)?1:0);
+
+      const wrap = el(`<div style="overflow-x:auto;"><table>
+        <thead><tr>
+          ${canDelete?'<th></th>':''}
+          <th>${esc(numberLabel)}</th><th>Date</th><th>Subject</th><th>${kind==='inward'?'From':'To'}</th><th>Status/File</th>
+          ${(canEdit||canDelete||canAddOutward)?'<th>Actions</th>':''}
+        </tr></thead>
+        <tbody></tbody>
+      </table></div>`);
+      const tbody = wrap.querySelector('tbody');
+
       filtered.slice(0,80).forEach(r=>{
         const statusTag = kind==='inward' ? `<span class="tag ${r.status==='Disposed'?'g':r.status==='Outward Issued'?'g':r.status==='Assigned'?'o':'r'}">${esc(r.status)}</span>` : '';
-        const row = el(`<div class="stackrow">
-          <div class="stackrow-head">
-            ${canDelete ? `<input type="checkbox" class="rowCheck" style="margin-top:4px;">` : ''}
-            <div style="flex:1;min-width:0;"><b>${esc(r.subject||'(no subject)')}</b> ${statusTag}
-            <div class="meta">${esc(numberLabel)}: ${esc(r.refNo||'')} · ${r.date||''} · ${esc(r.from||r.to||'')}${r.attachment?` · <a href="${r.attachment.url}" target="_blank">📎 View file</a>`:''}</div></div>
-          </div>
-          ${(canEdit||canDelete||canAddOutward) ? `<div class="stackrow-actions">
-            ${canEdit?`<button class="btn-o btn-sm" data-act="edit">Edit</button>`:''}
-            ${canAddOutward?`<button class="btn-brass btn-sm" data-act="addOutward">+ Outward for this</button>`:''}
-            ${canDelete?`<button class="btn-d btn-sm" data-act="del">Delete</button>`:''}
-          </div>`:''}
-          <div class="editBox hidden" style="margin-top:8px;"></div>
-        </div>`);
-        const checkbox = row.querySelector('.rowCheck');
+        const fileLink = r.attachment ? `<br><a href="${r.attachment.url}" target="_blank" style="font-size:.72rem;">📎 View</a>` : '';
+        const subjectShort = esc(r.subject||'(no subject)').slice(0,60) + ((r.subject||'').length>60?'…':'');
+        const tr = el(`<tr>
+          ${canDelete ? `<td><input type="checkbox" class="rowCheck"></td>` : ''}
+          <td><b>${esc(r.refNo||'')}</b></td>
+          <td style="white-space:nowrap;">${r.date||''}</td>
+          <td title="${esc(r.subject||'')}">${subjectShort}</td>
+          <td>${esc(r.from||r.to||'')}</td>
+          <td>${statusTag}${fileLink}</td>
+          ${(canEdit||canDelete||canAddOutward) ? `<td style="white-space:nowrap;">
+            ${canEdit?`<button class="btn-o btn-sm" data-act="edit" title="Edit" style="padding:5px 8px;">✎</button>`:''}
+            ${canAddOutward?`<button class="btn-brass btn-sm" data-act="addOutward" title="Create Outward for this Inward" style="padding:5px 8px;">+O</button>`:''}
+            ${canDelete?`<button class="btn-d btn-sm" data-act="del" title="Delete" style="padding:5px 8px;">🗑</button>`:''}
+          </td>`:''}
+        </tr>`);
+        const editRow = el(`<tr class="editBoxRow hidden"><td colspan="${colCount}"><div class="editBox" style="padding:10px 0;"></div></td></tr>`);
+
+        const checkbox = tr.querySelector('.rowCheck');
         if (checkbox) checkbox.onchange = ()=>{
           if (checkbox.checked) selectedIds.add(r.id); else selectedIds.delete(r.id);
           updateBulkBar();
         };
-        const editBtn = row.querySelector('[data-act=edit]');
-        const delBtn = row.querySelector('[data-act=del]');
-        const addOutwardBtn = row.querySelector('[data-act=addOutward]');
+        const editBtn = tr.querySelector('[data-act=edit]');
+        const delBtn = tr.querySelector('[data-act=del]');
+        const addOutwardBtn = tr.querySelector('[data-act=addOutward]');
         if (addOutwardBtn) addOutwardBtn.onclick = ()=>{
           APP.prefillOutwardFor = { id:r.id, refNo:r.refNo, subject:r.subject };
           APP.screen='outward'; render();
         };
         if (editBtn) editBtn.onclick = ()=>{
-          const box = row.querySelector('.editBox');
-          box.classList.toggle('hidden');
+          editRow.classList.toggle('hidden');
+          const box = editRow.querySelector('.editBox');
           if (box.dataset.built) return; box.dataset.built='1';
           box.appendChild(el(`<div><label>Date</label><input type="date" id="e_date" value="${r.date||''}"></div>`));
           box.appendChild(el(`<div><label>${kind==='inward'?'From':'To'}</label><input id="e_party" value="${esc(r.from||r.to||'')}"></div>`));
@@ -555,8 +571,10 @@ async function screenRegister(kind){
           try{ await api(kind==='inward'?'delete_inward':'delete_outward', {id:r.id}); APP.screen=kind; render(); }
           catch(e){ alert(e.message); }
         };
-        rowsBox.appendChild(row);
+        tbody.appendChild(tr);
+        tbody.appendChild(editRow);
       });
+      rowsBox.appendChild(wrap);
     }
     listCard.querySelector('#regSearch').oninput = (e)=>{ currentTerm = e.target.value; renderRows(); };
     renderRows();
