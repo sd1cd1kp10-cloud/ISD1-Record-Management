@@ -17,6 +17,8 @@
 h1,h2,h3{margin:0 0 6px;} header{background:var(--blue);color:#fff;padding:12px 16px;position:sticky;top:0;z-index:20;display:flex;justify-content:space-between;align-items:center;}
 header .t{font-size:1.02rem;font-weight:600;} header small{display:block;font-size:.68rem;opacity:.8;font-weight:400;}
 main{max-width:640px;margin:0 auto;padding:12px;}
+@media (min-width:820px){ main{max-width:900px;} }
+@media (min-width:1200px){ main{max-width:1180px;} }
 .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:12px;box-shadow:0 1px 2px rgba(0,0,0,.04);}
 label{display:block;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:8px 0 3px;}
 input,select,textarea{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:6px;font-size:.9rem;font-family:inherit;background:#fff;}
@@ -25,6 +27,15 @@ button{font-family:inherit;font-weight:600;font-size:.85rem;border-radius:6px;bo
 .btn-p{background:var(--blue);color:#fff;} .btn-o{background:#fff;border-color:var(--line);color:var(--ink);}
 .btn-d{background:#fff;border-color:var(--danger);color:var(--danger);} .btn-block{width:100%;margin-top:10px;}
 .row{display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--line);font-size:.86rem;}
+.stackrow{display:flex;flex-direction:column;align-items:stretch;justify-content:flex-start;padding:9px 0;border-bottom:1px solid var(--line);font-size:.86rem;gap:6px;}
+.stackrow-head{display:flex;gap:8px;align-items:flex-start;}
+.stackrow-actions{display:flex;gap:6px;flex-wrap:wrap;}
+@media (min-width:820px){
+  .stackrow{flex-direction:row;align-items:center;flex-wrap:wrap;gap:12px;padding:10px 4px;}
+  .stackrow-head{flex:1;min-width:0;}
+  .stackrow-actions{flex:none;}
+  .stackrow .editBox{flex-basis:100%;}
+}
 .row:last-child{border-bottom:none;} .meta{font-size:.72rem;color:var(--muted);}
 .tag{font-size:.62rem;text-transform:uppercase;font-weight:700;padding:2px 7px;border-radius:100px;}
 .tag.g{background:#e5f1ea;color:var(--ok);} .tag.o{background:#fbeee2;color:var(--warn);} .tag.r{background:#f7e3e3;color:var(--danger);}
@@ -219,7 +230,7 @@ async function screenDashboard(){
   if (APP.user.role==='admin'){
     try{
       const s = await api('dashboard_stats');
-      const pendingCount = Object.entries(s.inwardByStatus||{}).reduce((sum,[k,v])=> k==='Disposed' ? sum : sum+v, 0);
+      const pendingCount = s.pendingCount;
       w.appendChild(el(`<div class="card"><h2>Overview</h2>
         <div class="stat"><b>${s.inwardTotal}</b><span>Inward</span></div>
         <div class="stat"><b>${s.outwardTotal}</b><span>Outward</span></div>
@@ -258,6 +269,14 @@ async function screenRegister(kind){
   let listLoadError = '';
   try{ list = kind==='inward' ? (await api('list_inward')).inward : (await api('list_outward')).outward; }
   catch(e){ listLoadError = e.message; }
+  // Sort by number: Inward descending (newest/highest number first), Outward ascending.
+  function refNoCompare(a, b){
+    const na = parseFloat(a.refNo), nb = parseFloat(b.refNo);
+    const bothNumeric = !isNaN(na) && !isNaN(nb);
+    return bothNumeric ? (na-nb) : String(a.refNo||'').localeCompare(String(b.refNo||''));
+  }
+  list = list.slice().sort(refNoCompare);
+  if (kind==='inward') list.reverse();
   let inwardList = list;
   if (kind==='outward'){ try{ inwardList = (await api('list_inward')).inward; }catch(e){} }
 
@@ -429,7 +448,7 @@ async function screenRegister(kind){
     let currentTerm = '';
     function currentFiltered(){
       let base = list;
-      if (pendingActive) base = base.filter(r=>r.status!=='Disposed');
+      if (pendingActive) base = base.filter(r=>r.status!=='Outward Issued' && r.status!=='Disposed');
       return base.filter(r=>matches(r, currentTerm));
     }
     function updateBulkBar(){
@@ -454,13 +473,13 @@ async function screenRegister(kind){
       const canAddOutward = kind==='inward' && (isAdmin || perms.outward_create);
       filtered.slice(0,80).forEach(r=>{
         const statusTag = kind==='inward' ? `<span class="tag ${r.status==='Disposed'?'g':r.status==='Outward Issued'?'g':r.status==='Assigned'?'o':'r'}">${esc(r.status)}</span>` : '';
-        const row = el(`<div class="row" style="flex-direction:column;align-items:stretch;">
-          <div style="display:flex;gap:8px;align-items:flex-start;">
+        const row = el(`<div class="stackrow">
+          <div class="stackrow-head">
             ${canDelete ? `<input type="checkbox" class="rowCheck" style="margin-top:4px;">` : ''}
-            <div style="flex:1;"><b>${esc(r.subject||'(no subject)')}</b> ${statusTag}
+            <div style="flex:1;min-width:0;"><b>${esc(r.subject||'(no subject)')}</b> ${statusTag}
             <div class="meta">${esc(numberLabel)}: ${esc(r.refNo||'')} · ${r.date||''} · ${esc(r.from||r.to||'')}${r.attachment?` · <a href="${r.attachment.url}" target="_blank">📎 View file</a>`:''}</div></div>
           </div>
-          ${(canEdit||canDelete||canAddOutward) ? `<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+          ${(canEdit||canDelete||canAddOutward) ? `<div class="stackrow-actions">
             ${canEdit?`<button class="btn-o btn-sm" data-act="edit">Edit</button>`:''}
             ${canAddOutward?`<button class="btn-brass btn-sm" data-act="addOutward">+ Outward for this</button>`:''}
             ${canDelete?`<button class="btn-d btn-sm" data-act="del">Delete</button>`:''}
@@ -551,7 +570,7 @@ async function screenRegister(kind){
       const unassigned = inw.inward.filter(x=>!x.assignedTo);
       if (!unassigned.length) distCard.appendChild(el(`<div class="empty">Nothing pending assignment.</div>`));
       unassigned.slice(0,20).forEach(r=>{
-        const row = el(`<div class="row" style="flex-direction:column;align-items:stretch;">
+        const row = el(`<div class="stackrow">
           <div><b>${esc(r.subject)}</b><div class="meta">${esc(r.refNo)} · ${r.date}</div></div>
           <div style="display:flex;gap:6px;margin-top:6px;">
             <select style="flex:1;">${emps.employees.filter(e=>e.accessStatus==='active').map(e=>`<option value="${e.id}">${esc(e.name)}</option>`).join('')}</select>
@@ -668,6 +687,7 @@ function openMultiPageScanner(onComplete){
 
   const overlay = el(`<div style="position:fixed;inset:0;background:#000;z-index:100;display:flex;flex-direction:column;">
     <video id="scanVideo" autoplay playsinline style="flex:1;width:100%;object-fit:cover;background:#111;"></video>
+    <div style="text-align:center;color:#9c9;font-size:.7rem;padding:2px;" id="focusHint">Tap the preview to focus</div>
     <div style="background:#111;padding:10px;text-align:center;color:#fff;font-size:.85rem;" id="scanCount">0 pages captured</div>
     <div style="background:#111;padding:10px;display:flex;gap:8px;">
       <button class="btn-o btn-block" id="scanCancel" type="button">✕ Cancel</button>
@@ -679,15 +699,54 @@ function openMultiPageScanner(onComplete){
   const video = overlay.querySelector('#scanVideo');
   const countLabel = overlay.querySelector('#scanCount');
   const doneBtn = overlay.querySelector('#scanDone');
+  let track = null;
 
   function cleanup(){
     if (stream) stream.getTracks().forEach(t=>t.stop());
     if (overlay.parentNode) document.body.removeChild(overlay);
   }
 
-  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-    .then(s=>{ stream = s; video.srcObject = s; })
-    .catch(err=>{ alert('Could not access camera: '+err.message); cleanup(); });
+  async function startCamera(){
+    const highRes = { video: {
+      facingMode: 'environment',
+      width: { ideal: 2560 }, height: { ideal: 1440 },
+      advanced: [{ focusMode: 'continuous' }]
+    }};
+    try{
+      stream = await navigator.mediaDevices.getUserMedia(highRes);
+    }catch(err){
+      // Device rejected the high-res/focus constraints — fall back to a basic request.
+      try{ stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); }
+      catch(err2){ alert('Could not access camera: '+err2.message); cleanup(); return; }
+    }
+    video.srcObject = stream;
+    track = stream.getVideoTracks()[0];
+    // Best-effort: explicitly request continuous autofocus if the device exposes that capability.
+    try{
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      if (caps.focusMode && caps.focusMode.includes('continuous')){
+        await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
+      }
+    }catch(e){}
+  }
+  startCamera();
+
+  // Tap-to-focus: on supported devices (mainly Android Chrome), nudge focus to the tapped point.
+  video.addEventListener('click', async (e)=>{
+    if (!track || !track.getCapabilities) return;
+    try{
+      const caps = track.getCapabilities();
+      if (!caps.focusMode) return;
+      const rect = video.getBoundingClientRect();
+      const x = (e.clientX - rect.left) / rect.width;
+      const y = (e.clientY - rect.top) / rect.height;
+      const constraints = { advanced: [{ focusMode: 'single-shot', pointsOfInterest: [{x, y}] }] };
+      await track.applyConstraints(constraints);
+      const hint = overlay.querySelector('#focusHint');
+      hint.textContent = 'Focusing…';
+      setTimeout(()=>{ hint.textContent = 'Tap the preview to focus'; }, 700);
+    }catch(err){ /* not supported on this device — silently ignore */ }
+  });
 
   overlay.querySelector('#scanCancel').onclick = cleanup;
 
@@ -698,7 +757,7 @@ function openMultiPageScanner(onComplete){
     overlay.style.background = '#fff';
     setTimeout(()=>{ overlay.style.background = '#000'; }, 90);
     openPageEditor(canvas, (finalCanvas)=>{
-      pages.push({ dataUrl: finalCanvas.toDataURL('image/jpeg', 0.9), w: finalCanvas.width, h: finalCanvas.height });
+      pages.push({ dataUrl: finalCanvas.toDataURL('image/jpeg', 0.95), w: finalCanvas.width, h: finalCanvas.height });
       countLabel.textContent = `${pages.length} page${pages.length>1?'s':''} captured`;
       doneBtn.disabled = pages.length===0;
     });
@@ -856,16 +915,49 @@ function openPageEditor(sourceCanvas, onDone){
         d[i]=d[i+1]=d[i+2]=lum;
       }
     } else if (mode==='bw'){
+      // Sample luminance to pick an adaptive threshold (Otsu-lite: use the midpoint
+      // between the 10th and 90th percentile) so it works across lighting conditions.
+      const sampleStep = 16;
+      const lums = [];
+      for (let i=0;i<d.length;i+=4*sampleStep){
+        lums.push(0.299*d[i]+0.587*d[i+1]+0.114*d[i+2]);
+      }
+      lums.sort((a,b)=>a-b);
+      const lo = lums[Math.floor(lums.length*0.1)] || 60;
+      const hi = lums[Math.floor(lums.length*0.9)] || 200;
+      const threshold = (lo+hi)/2;
       for (let i=0;i<d.length;i+=4){
         const lum = 0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
-        const v = lum > 150 ? 255 : 0;
+        const v = lum > threshold ? 255 : 0;
         d[i]=d[i+1]=d[i+2]=v;
       }
     } else if (mode==='enhance'){
-      const contrast = 1.35, brightness = 18;
+      // Real auto-contrast ("magic color"): stretch each channel's actual range
+      // (with 1% clipping to ignore outlier noise pixels) to fill 0-255, then
+      // apply a mild extra contrast boost. Adapts to each photo's own lighting
+      // instead of using one fixed brightness/contrast value for every shot.
+      const channels = [0,1,2];
+      const mins = [255,255,255], maxs = [0,0,0];
+      const histSize = 256;
+      const hist = [new Array(histSize).fill(0), new Array(histSize).fill(0), new Array(histSize).fill(0)];
       for (let i=0;i<d.length;i+=4){
-        for (let c=0;c<3;c++){
-          d[i+c] = Math.min(255, Math.max(0, (d[i+c]-128)*contrast + 128 + brightness));
+        for (const c of channels) hist[c][d[i+c]|0]++;
+      }
+      const totalPixels = d.length/4;
+      const clip = totalPixels*0.01;
+      for (const c of channels){
+        let count=0;
+        for (let v=0; v<histSize; v++){ count+=hist[c][v]; if (count>clip){ mins[c]=v; break; } }
+        count=0;
+        for (let v=histSize-1; v>=0; v--){ count+=hist[c][v]; if (count>clip){ maxs[c]=v; break; } }
+        if (maxs[c]<=mins[c]){ mins[c]=0; maxs[c]=255; }
+      }
+      const extraContrast = 1.12, extraBrightness = 6;
+      for (let i=0;i<d.length;i+=4){
+        for (const c of channels){
+          let v = (d[i+c]-mins[c]) * (255/(maxs[c]-mins[c]));
+          v = (v-128)*extraContrast + 128 + extraBrightness;
+          d[i+c] = Math.min(255, Math.max(0, v));
         }
       }
     }
@@ -958,7 +1050,7 @@ async function screenMyWork(){
     const {items} = await api('my_work');
     if (!items.length) w.appendChild(el(`<div class="empty">Nothing assigned to you right now.</div>`));
     items.forEach(r=>{
-      const row = el(`<div class="row" style="flex-direction:column;align-items:stretch;">
+      const row = el(`<div class="stackrow">
         <div><b>${esc(r.subject)}</b><div class="meta">${esc(r.refNo)} · Due: ${r.dueDate||'—'} · Priority: ${r.priority||'Normal'}</div>
         <div class="meta">Status: ${esc(r.status)}</div></div>
         <div style="display:flex;gap:6px;margin-top:6px;">
@@ -1043,7 +1135,7 @@ async function screenUsers(){
   try{
     const {employees} = await api('list_employees');
     employees.forEach(u=>{
-      const box = el(`<div class="row" style="flex-direction:column;align-items:stretch;">
+      const box = el(`<div class="stackrow">
         <div><b>${esc(u.name)}</b> <span class="tag ${u.accessStatus==='active'?'g':'r'}">${u.accessStatus}</span>
         <div class="meta">${esc(u.username)} · ${roleLabel(u.role)}</div></div>
         <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
@@ -1135,7 +1227,7 @@ async function screenStorage(){
       listBox.innerHTML='';
       if (!files.length){ listBox.appendChild(el(`<div class="empty">No files found.</div>`)); return; }
       files.forEach(f=>{
-        const row = el(`<div class="row" style="flex-direction:column;align-items:stretch;">
+        const row = el(`<div class="stackrow">
           <div><b>${esc(f.name)}</b><div class="meta">${esc(f.folderPath)} · ${new Date(f.updated).toLocaleDateString()}</div></div>
           <div style="display:flex;gap:6px;margin-top:6px;">
             <a href="${f.url}" target="_blank" class="btn-o btn-sm">View</a>

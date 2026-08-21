@@ -582,13 +582,19 @@ var ACTIONS = {
     requireAuth(state, p.token);
     var byStatus = {};
     state.inward.forEach(function(x){ byStatus[x.status]=(byStatus[x.status]||0)+1; });
+    // Pending Inward = total inward entries that do NOT yet have an Outward issued
+    // against them. Once an Outward is linked to an Inward number, that Inward is
+    // treated as disposed, not pending — regardless of any other status field.
+    var pendingCount = state.inward.filter(function(x){
+      return x.status!=='Outward Issued' && x.status!=='Disposed';
+    }).length;
     var active=0, inactive=0;
     state.users.forEach(function(u){ u.accessStatus==='active'?active++:inactive++; });
     var today = new Date().toISOString().slice(0,10);
     var present=0, absent=0;
     state.attendance.filter(function(a){return a.date===today;}).forEach(function(a){ a.status==='Present'?present++:absent++; });
     return {
-      inwardTotal: state.inward.length, inwardByStatus: byStatus,
+      inwardTotal: state.inward.length, inwardByStatus: byStatus, pendingCount: pendingCount,
       outwardTotal: state.outward.length,
       employeesTotal: state.users.length, activeEmployees:active, inactiveEmployees:inactive,
       attendanceToday: {present:present, absent:absent}
